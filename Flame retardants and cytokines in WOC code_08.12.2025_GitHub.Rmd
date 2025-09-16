@@ -1,0 +1,1807 @@
+---
+title: "OPFR"
+output: html_document
+date: "2024-09-21"
+---
+
+# INITIAL DATA STEPS
+```{r setup, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(boot) 
+library(corrplot)
+library(table1)
+library(AlphaPart)
+
+library(stringr)
+library(data.table)
+library(ggstance)
+library(forcats)
+library(qgcomp)
+
+library(ggplot2)
+library(gtable)
+library(grid)
+library(gtools)
+library(mgcv)
+library(tidygam)
+library(bkmr)
+```
+
+
+
+# COMPLETE DATA
+```{r complete, include=FALSE}
+
+
+# CREATE A SUBSET TO CHECK FOR PEOPLE WITH FULL OPFR/PBDE DATA
+data_complete <- pbde %>% 
+  inner_join(opfr, by="ppt_id") %>% 
+  inner_join(cytokine, by="ppt_id") %>%
+  left_join(covar, by="ppt_id") %>% 
+  distinct(ppt_id, .keep_all=TRUE)
+
+# add in PCAs
+data_complete <- data_complete %>% 
+  left_join(pca, by="ppt_id")
+
+# NATURAL LOG TRANSFORMATIONS
+data_complete <- data_complete %>% 
+  mutate(logBDCPP.sg = log(BDCPP.sg.imp),
+         logDPP.sg = log(DPP.sg.imp),
+         logBCEP.sg = log(BCEP.sg.imp),
+         logBCIPP.sg = log(BCIPP.sg.imp),
+         logbde47_lip = log(bde47_lip),
+         logbde99_lip = log(bde99_lip),
+         logbde100_lip = log(bde100_lip),
+         logbde153_lip = log(bde153_lip))
+
+# COUNT OVERLAPPING OBSERVATIONS
+data_complete %>% count()
+```
+
+# OPFR ONLY
+```{r overlap, include=FALSE}
+# REORDER COLUMNS BY FUNCTIONAL GROUP
+data_complete <- data_complete %>% 
+  select(ppt_id, sg, BDCPP, DPP, BCEP, BCIPP, logBDCPP.sg, logDPP.sg, logBCEP.sg, logBCIPP.sg,
+         BDCPP.sg.imp, DPP.sg.imp, BCEP.sg.imp, BCIPP.sg.imp, 
+         BDCPP.flag, DPP.flag, BCEP.flag, BCIPP.flag, #flags
+         mat_age, marital, mat_race_eth, mat_educ, foreign, bmi.procedure, employed, insurance,
+         gest_multiple, parity, grav, grav_cat, smoke, drugs, 
+         gest.age.procedure, job.strain, social.support,
+         social.support.cat, why_participate, #covariates
+         CCL2_c, CCL2.c.LOD, CCL2_m, CCL2.m.LOD, CCL2_p, CCL2.p.LOD, 
+         CCL3_c, CCL3.c.LOD, CCL3_m, CCL3.m.LOD, CCL3_p, CCL3.p.LOD, 
+         CCL4_c, CCL4.c.LOD, CCL4_m, CCL4.m.LOD, CCL4_p, CCL4.p.LOD, 
+         CCL17_c, CCL17.c.LOD, CCL17_m, CCL17.m.LOD,
+         CCL22_c, CCL22.c.LOD, CCL22_m, CCL22.m.LOD, CCL22_p, CCL22.p.LOD,
+         CXCL9_c, CXCL9.c.LOD, CXCL9_m, CXCL9.m.LOD, 
+         CXCL10_c, CXCL10.c.LOD, CXCL10_m, CXCL10.m.LOD, CXCL10_p, CXCL10.p.LOD, 
+         IL.8_m, IL8.m.LOD, IL.8_p, IL8.p.LOD, #chemokines    
+         IL.1Beta_c, IL1.beta.c.LOD, IL.1Beta_p, IL1.beta.p.LOD,
+         IL.2_c, IL2.c.LOD, IL.2_p, IL2.p.LOD,
+         IL.7_c, IL7.c.LOD, IL.7_m, IL7.m.LOD, 
+         IL.12_c, IL12.c.LOD, IL.12_p, IL12.p.LOD,
+         IFN.Alpha_c, IFN.alpha.c.LOD, IFN.Alpha_m, IFN.alpha.m.LOD, IFN.Alpha_p, IFN.alpha.p.LOD,
+         IFN.Gamma_c, IFN.gamma.c.LOD, IFN.Gamma_m, IFN.gamma.m.LOD,
+         TNF.Alpha_c, TNF.alpha.c.LOD, TNF.Alpha_m, TNF.alpha.m.LOD, TNF.Alpha_p, TNF.alpha.p.LOD,
+         TNF.RI_c, TNF.RI.c.LOD, TNF.RI_m, TNF.RI.m.LOD, TNF.RI_p, TNF.RI.p.LOD, #pro-inflammatory cytokines
+         IL.4_c, IL4.c.LOD, IL.4_m, IL4.m.LOD, IL.4_p, IL4.p.LOD,
+         IL.10_c, IL10.c.LOD, IL.10_p, IL10.p.LOD, #anti-inflammatory cytokines
+         IL.6_c, IL6.c.LOD, IL.6_m, IL6.m.LOD, IL.6_p, IL6.p.LOD, #pro- and anti-inflammatory cytokines
+         IL.28A_c, IL28.c.LOD, IL.28A_p, IL28.p.LOD, #immunomodulatory cytokine
+         crh_m, everything()) #hormone
+```
+
+```{r definition, include=FALSE}
+## Create universal vectors for use in functions
+# OPFRs
+opfr_names <- c(
+  "BDCPP.sg.imp",
+  "DPP.sg.imp",
+  "BCEP.sg.imp",
+  "BCIPP.sg.imp"
+  )
+
+# FULL LIST
+cyto_full_names <- c(
+  # Maternal
+  "CCL2_m", "CCL3_m", "CCL4_m", "CCL17_m", "CCL22_m", "CXCL9_m", "CXCL10_m",
+  "IL.7_m", "IFN.Alpha_m", "IFN.Gamma_m", "TNF.Alpha_m", "TNF.RI_m", 
+  "IL.4_m", 
+  "IL.6_m",
+  "crh_m",  
+  # Cord
+  "CCL2_c", "CCL3_c",  "CCL4_c", "CCL17_c", "CCL22_c", "CXCL9_c", "CXCL10_c",          
+  "IL.1Beta_c", "IL.2_c", "IL.7_c", "IL.12_c", "IFN.Alpha_c", "IFN.Gamma_c", "TNF.Alpha_c", "TNF.RI_c",
+  "IL.4_c", "IL.10_c",   
+  "IL.6_c",
+  "IL.28A_c",
+  # Placenta
+  "CCL2_p", "CCL3_p", "CCL4_p", "CCL22_p", "CXCL10_p", "IL.8_p", 
+  "IL.1Beta_p", "IL.2_p", "IL.12_p", "TNF.Alpha_p", "TNF.RI_p",
+  "IL.4_p", "IL.10_p", 
+  "IL.6_p", 
+  "IL.28A_p"   
+  )
+
+# LIST OF INTEREST
+cyto_names <- c("CCL2_c", "CCL2_m", "CCL2_p", "CCL3_c","CCL3_m","CCL3_p",
+                "CCL4_c","CCL4_m","CCL4_p","CCL17_c","CCL17_m",
+                "CCL22_c","CCL22_m","CCL22_p","CXCL9_c","CXCL9_m", 
+                "CXCL10_c","CXCL10_m","CXCL10_p", "IL.8_m","IL.8_p", #chemokines
+                "IL.1Beta_c", "IL.1Beta_p", "IL.2_c", "IL.2_p",
+                "IL.7_c", "IL.7_m", "IL.12_c", "IL.12_p",
+                "IFN.Alpha_c", "IFN.Alpha_m", "IFN.Gamma_c", "IFN.Gamma_m",
+                "TNF.Alpha_c", "TNF.Alpha_m", "TNF.Alpha_p",
+                "TNF.RI_c",  "TNF.RI_m", "TNF.RI_p", #pro-inflammatory cytokines
+                "IL.4_c", "IL.4_m", "IL.4_p", "IL.10_c", "IL.10_p", #anti-inflammatory cytokines
+                "IL.6_c", "IL.6_m", "IL.6_p", #pro- and anti-inflammatory cytokines
+                "IL.28A_c", "IL.28A_p") #immunomodulatory cytokine
+
+# LIST OF INTEREST (LOD)
+cyto_names_LOD <- c("CCL2.c.LOD", "CCL2.m.LOD", "CCL2.p.LOD", "CCL3.c.LOD", "CCL3.m.LOD","CCL3.p.LOD",
+                    "CCL4.c.LOD", "CCL4.m.LOD","CCL4.p.LOD", "CCL17.c.LOD","CCL17.m.LOD",
+                    "CCL22.c.LOD","CCL22.m.LOD","CCL22.p.LOD", "CXCL9.c.LOD","CXCL9.m.LOD",
+                    "CXCL10.c.LOD","CXCL10.m.LOD","CXCL10.p.LOD", "IL8.m.LOD","IL8.p.LOD", #chemokines
+                    "IL1.beta.c.LOD", "IL1.beta.p.LOD", "IL2.c.LOD", "IL2.p.LOD",
+                    "IL7.c.LOD", "IL7.m.LOD", "IL12.c.LOD", "IL12.p.LOD",
+                    "IFN.alpha.c.LOD", "IFN.alpha.m.LOD", "IFN.gamma.c.LOD", "IFN.gamma.m.LOD",
+                    "TNF.alpha.c.LOD", "TNF.alpha.m.LOD", "TNF.alpha.p.LOD",
+                    "TNF.RI.c.LOD",  "TNF.RI.m.LOD", "TNF.RI.p.LOD", #pro-inflammatory cytokines
+                    "IL4.c.LOD", "IL4.m.LOD", "IL4.p.LOD", "IL10.c.LOD", "IL10.p.LOD", #anti-inflammatory cytokines
+                    "IL6.c.LOD", "IL6.m.LOD", "IL6.p.LOD", #pro- and anti-inflammatory cytokines
+                    "IL28.c.LOD", "IL28.p.LOD") #immunomodulatory cytokine
+
+# LIST OF INTEREST (PCA)
+pca_names <- c("PC1_c", "PC2_c", "PC3_c", 
+               "PC1_m", "PC2_m", "PC3_m", 
+               "PC1_p", "PC2_p", "PC3_p", "PC4_p")
+```
+
+## ANALYSIS
+
+## Table 1. Demographics 
+```{r table1, include=FALSE}
+# TABLE CONSTRUCTION
+# DICHOTOMIZING VARIABLES
+data_table1 <- data_complete
+
+# mat_educ
+data_table1$mat_educ <- 
+  factor(data_table1$mat_educ, levels = c(1:2),
+         labels=c("High school or less", 
+                  "Greater than high school"))
+
+# marital
+data_table1$marital <- 
+  factor(data_table1$marital, levels = c(1,2),
+         labels=c("Single", 
+                  "Married or living with a partner"))
+#mat_race_eth
+data_table1$mat_race_eth <- 
+  factor(data_table1$mat_race_eth, levels = c("Latina", "Black", "White", 
+                                                "Asian/PI/Native American"),
+         labels=c("Latina", 
+                  "Black",
+                  "White",
+                  "Asian/PI/Native American"))
+
+# foreign
+data_table1$foreign <- 
+  factor(data_table1$foreign, levels = c(1,0),
+         labels=c("Born outside of the US", 
+                  "Born in the US"))
+
+# employed
+data_table1$employed <- 
+  factor(data_table1$employed, levels = c(1,0),
+         labels=c("Employed", 
+                  "Unemployed"))
+# insurance
+data_table1$insurance <- 
+  factor(data_table1$insurance, levels = c(1:2),
+         labels=c("Private/self-pay", 
+                  "Public"))
+
+# parity
+data_table1$parity <- 
+  factor(data_table1$parity, levels = c(0,1),
+         labels=c("0", 
+                  "1 or more"))
+
+# grav_cat
+data_table1$grav_cat <- 
+  factor(data_table1$grav_cat, levels = c(0,1),
+         labels=c("1", 
+                  "> 1"))
+
+# smoke
+data_table1$smoke <- 
+  factor(data_table1$smoke, levels = c(0:1),
+         labels=c("Never smoker", 
+                  "Current or former smoker"))
+
+
+# TABLE LABELS AND UNITS 
+label(data_table1$mat_age)   <- "Maternal age"
+label(data_table1$mat_educ)  <- "Maternal education"
+label(data_table1$marital)  <- "Marital status"
+label(data_table1$mat_race_eth)  <- "Maternal race/ethnicity"
+label(data_table1$foreign)  <- "Nativity"
+label(data_table1$bmi.procedure)  <- "BMI at time of procedure"
+label(data_table1$employed)  <- "Employment status"
+label(data_table1$insurance)  <- "Insurance status"
+label(data_table1$parity)  <- "Parity"
+label(data_table1$grav_cat)  <- "Gravidity"
+label(data_table1$smoke)  <- "Smoking status"
+label(data_table1$gest.age.procedure) <- "Gestational age at procedure"
+
+units(data_table1$mat_age)   <- "years"
+
+caption  <- "Table 1"
+footnote <- "ᵃ Footnote"
+
+# PLOT TABLE1
+plot_table1 <- table1(~ mat_age + gest.age.procedure + bmi.procedure + mat_educ + 
+                        marital + mat_race_eth +
+                        employed + insurance + parity + grav_cat + smoke, 
+       data=data_table1,
+       overall=c(left="Total"), caption=caption, footnote=footnote,
+       topclass="Rtable1-zebra")
+plot_table1
+```
+
+
+## Table 2. PBDE, OPFR, and cytokine distributions
+
+
+```{r table2, include=FALSE}
+## create list of names
+opfr_pbde_names <- c(
+  "BDCPP.sg.imp",
+  "DPP.sg.imp",
+  "BCEP.sg.imp",
+  "BCIPP.sg.imp",
+  "bde47_lip",
+  "bde99_lip",
+  "bde100_lip",
+  "bde153_lip"
+  )
+
+
+## Create universal vectors for use in functions
+# PBDEs
+pbde_full_names <- c("bde17_lip",       
+                     "bde28_lip",      
+                     "bde47_lip",       
+                     "bde66_lip",      
+                     "bde85_lip",       
+                     "bde99_lip",       
+                     "bde100_lip",
+                     "bde153_lip",
+                     "bde154_lip",
+                     "bde183_lip",
+                     "bde196_lip",
+                     "bde197_lip",
+                     "bde201_lip",
+                     "bde202_lip",
+                     "bde203_lip",
+                     "bde206_lip",
+                     "bde207_lip",
+                     "bde208_lip")
+# PBDEs of interest
+pbde_names <- c("bde47_lip",       
+                "bde99_lip",       
+                "bde100_lip",
+                "bde153_lip")
+
+# Initialize an empty result table
+result_table <- tibble()
+
+# LOOP FOR OPFR/PBDEs
+for (name in opfr_pbde_names) {
+  x <- data_complete[[name]]
+  flag <- if_else(grepl(".sg.imp", name), 
+                  paste((str_remove(name, ".sg.imp")), "flag", sep="."),
+                  paste((str_extract(name, "[^_]*")), "flag", sep="."))
+  
+  mean <- round(geometric.mean(x, na.rm = TRUE), 2)
+  sd <- round(exp(sd(log(x), na.rm = TRUE)), 2)
+  
+  median <- round(quantile(na.omit(x), 0.50), 2)
+  q1 <- round(quantile(na.omit(x), 0.25), 2)
+  q3 <- round(quantile(na.omit(x), 0.75), 2)
+  
+  #rounding exception
+  if (name %in% c("bde99_lip","bde100_lip","bde153_lip")) {
+  median <- round(quantile(na.omit(x), 0.50), 3)
+  q1 <- round(quantile(na.omit(x), 0.25), 3)
+  q3 <- round(quantile(na.omit(x), 0.75), 3)
+  }
+  
+  #iqr_var <- round(IQR(na.omit(x)), 2)
+  detectable <- round(100-mean(data_complete[[flag]], na.rm=TRUE)*100, 2)
+  
+  result_data <- tibble(
+    "Name" = name,
+    "% above LOD" = detectable,
+    "Geometric Mean (SD)" = paste0(mean, " (", sd, ")"),
+    "Median (Q1, Q3)" = paste0(median, " (", q1, ", ", q3, ")")
+  )
+
+# Append the results to the table
+  result_table <- bind_rows(result_table, result_data)
+}
+
+# LOOP FOR CYTOKINES
+for (name in cyto_names_LOD) {
+  
+  #obtaining cytokine variable name from LOD name
+  name_print <- gsub('.LOD','', name) #remove LOD
+  name_print <- gsub('(IL)(28)', "\\1.\\2A", name_print) #IL28
+  name_print <- gsub('(IL)([0-9])', "\\1.\\2", name_print) #ILs
+  name_print <- gsub('\\.([cmp])', "_\\1", name_print) # . -> _
+  name_print <- gsub('([NF]\\.)([ag])', "\\1\\U\\2", name_print, perl=TRUE) #TNFs/IFNs
+  name_print <- gsub('\\.([b])', "\\U\\1", name_print, perl=TRUE) #IL Betas
+  
+  x <- data_complete[[name]] #LOD
+  y <- data_complete[[name_print]] #cytokine
+  
+  mean <- round(geometric.mean(y, na.rm = TRUE), 2)
+  sd <- round(exp(sd(log(y), na.rm = TRUE)), 2)
+  
+  q1 <- round(quantile(na.omit(y), 0.25), 2)
+  q3 <- round(quantile(na.omit(y), 0.75), 2)
+  median <- round(quantile(na.omit(y), 0.50), 2)
+  #iqr_var <- round(IQR(na.omit(y)), 2)
+  detectable <- round(100-mean(data_complete[[name]], na.rm=TRUE)*100, 2)
+  
+  result_data <- tibble(
+    "Name" = name_print,
+    "% above LOD" = detectable,
+    "Geometric Mean (SD)" = paste0(mean, " (", sd, ")"),
+    "Median (Q1, Q3)" = paste0(median, " (", q1, ", ", q3, ")"),
+  )
+
+# Append the results to the table
+  result_table <- bind_rows(result_table, result_data)
+}
+
+
+
+
+# Editing cytokine names
+result_table <- result_table %>% 
+  mutate(functional_group = case_when(grepl(".sg.imp", Name) ~ "Organophosphate flame retardant",
+                                     grepl("bde", Name) ~ "Polybrominated diphenyl ethers",
+                                     grepl("CL", Name)|grepl("IL.8", Name) ~ "Chemokine",
+                                     grepl("TNF", Name)|grepl("IFN", Name) ~ "Pro-inflammatory cytokine",
+                                     grepl("IL.4", Name)|grepl("IL.10", Name) ~ "Anti-inflammatory cytokine",
+                                     grepl("IL.6", Name) ~ "Pro- & Anti-inflammatory cytokine",
+                                     grepl("28", Name) ~ "Immunomodulatory cytokine",
+                                     grepl("crh", Name) ~ "Hormone",
+                                      .default="Pro-inflammatory cytokine"), 
+         Name = case_when(grepl(".sg.imp", Name) ~ gsub('.sg.imp', '', Name),
+                          grepl("bde", Name) ~ gsub('bde', 'BDE-', Name),
+                          grepl("_lip", Name) ~ gsub('_lip', '', Name),
+                          grepl("_c", Name) ~ gsub('_c', " (Cord)", Name),
+                          grepl("_m", Name) ~ gsub('_m', " (Maternal)", Name),
+                          grepl("_p", Name) ~ gsub('_p', " (Placenta)", Name),
+                          .default = Name),
+         Name = gsub('\\.', '-', Name),
+         functional_group = factor(functional_group, 
+                                   levels=c("Organophosphate flame retardant",
+                                            "Polybrominated diphenyl ethers",
+                                            "Chemokine",
+                                            "Pro-inflammatory cytokine",
+                                            "Anti-inflammatory cytokine",
+                                            "Pro- & Anti-inflammatory cytokine",
+                                            "Immunomodulatory cytokine",
+                                            "Hormone"))) %>% 
+  # Sort by functional group
+  arrange(functional_group, Name)
+
+# Quick output as datatable
+#DT::datatable(result_table, class = 'cell-border stripe', rownames = FALSE)
+result_table
+# readr::write_csv(as.data.frame(result_table), "Table 2 Both.csv")
+```
+
+
+
+
+
+
+
+## MODELS
+## Table S1 and S2. Minimally adjusted and fully adjusted
+
+```{r regression, include=FALSE}
+
+lm.regression.m1 <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(OPFR = character(0), Cytokine = character(0), Estimate = character(0))
+
+    # Loop over Cytokine variables
+  for (cyto_name in cyto_names) {
+    # Loop over OPFR variables
+    for (opfr_name in opfr_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ log(", opfr_name, ") + gest.age.procedure"))
+      # Fit the linear model
+      model <- lm(formula, data = data)
+
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta <- round(coef(model)[2], 2)
+      conf_intervals <- confint(model)
+      conf_low <- round(conf_intervals[2, 1], 2)
+      conf_high <- round(conf_intervals[2, 2], 2)
+      result <- data.frame(
+        OPFR = opfr_name,
+        Cytokine = cyto_name,
+        Estimate = paste0(coef.beta, " (", conf_low, ", ", conf_high, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+
+lm.regression.m3 <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(OPFR = character(0), Cytokine = character(0), Estimate = character(0))
+
+    # Loop over Cytokine variables
+  for (cyto_name in cyto_names) {
+    # Loop over OPFR variables
+    for (opfr_name in opfr_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ log(", opfr_name, ") + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model <- lm(formula, data = data)
+
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta <- round(coef(model)[2], 2)
+      conf_intervals <- confint(model)
+      conf_low <- round(conf_intervals[2, 1], 2)
+      conf_high <- round(conf_intervals[2, 2], 2)
+      result <- data.frame(
+        OPFR = opfr_name,
+        Cytokine = cyto_name,
+        Estimate = paste0(coef.beta, " (", conf_low, ", ", conf_high, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+
+## Model 1
+results_m1_opfr <- lm.regression.m1(data_complete)
+results_m1_opfr <- results_m1_opfr %>% 
+ pivot_wider(names_from = OPFR,
+             values_from = Estimate)
+results_m1_opfr
+#utils::write.csv(results_m1, "m1_opfr.csv")
+
+
+## Model 3
+results_m3_opfr <- lm.regression.m3(data_complete)
+results_m3_opfr <- results_m3_opfr %>% 
+ pivot_wider(names_from = OPFR,
+             values_from = Estimate)
+results_m3_opfr
+#utils::write.csv(results_m3, "m3_opfr.csv")
+```
+
+```{r regression, include=FALSE}
+
+
+lm.regression.m1.pbde <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(PBDE = character(0), Cytokine = character(0), Estimate = character(0))
+
+    # Loop over Cytokine variables
+  for (cyto_name in cyto_names) {
+    # Loop over PBDE variables
+    for (pbde_name in pbde_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ log(", pbde_name, ") + gest.age.procedure"))
+      # Fit the linear model
+      model <- lm(formula, data = data)
+
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta <- round(coef(model)[2], 2)
+      conf_intervals <- confint(model)
+      conf_low <- round(conf_intervals[2, 1], 2)
+      conf_high <- round(conf_intervals[2, 2], 2)
+      result <- data.frame(
+        PBDE = pbde_name,
+        Cytokine = cyto_name,
+        Estimate = paste0(coef.beta, " (", conf_low, ", ", conf_high, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+
+
+lm.regression.m3.pbde <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(PBDE = character(0), Cytokine = character(0), Estimate = character(0))
+
+    # Loop over Cytokine variables
+  for (cyto_name in cyto_names) {
+    # Loop over PBDE variables
+    for (pbde_name in pbde_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ log(", pbde_name, ") + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model <- lm(formula, data = data)
+
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta <- round(coef(model)[2], 2)
+      conf_intervals <- confint(model)
+      conf_low <- round(conf_intervals[2, 1], 2)
+      conf_high <- round(conf_intervals[2, 2], 2)
+      result <- data.frame(
+        PBDE = pbde_name,
+        Cytokine = cyto_name,
+        Estimate = paste0(coef.beta, " (", conf_low, ", ", conf_high, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+
+
+## Model 1
+results_m1_pbde <- lm.regression.m1.pbde(data_complete)
+results_m1_pbde <- results_m1_pbde %>% 
+ pivot_wider(names_from = PBDE,
+             values_from = Estimate)
+results_m1_pbde
+#utils::write.csv(results_m1, "m1_pbde.csv")
+
+
+## Model 3
+results_m3_pbde <- lm.regression.m3.pbde(data_complete)
+results_m3_pbde <- results_m3_pbde %>% 
+ pivot_wider(names_from = PBDE,
+             values_from = Estimate)
+results_m3_pbde
+#utils::write.csv(results_m3, "m3_pbde.csv")
+```
+
+
+### FIGURE 1
+```{r forest plots, include=FALSE}
+linear.models.adj <- function(dt) {
+  # Create a matrix to store the results
+  results <- matrix(NA, nrow = length(cyto_names), ncol = length(opfr_names))
+  colnames(results) <- opfr_names
+  rownames(results) <- cyto_names
+
+  # Loop over VRM variables
+  for (i in seq_along(cyto_names)) {
+    # Loop over predictor variables (inside the first loop)
+    for (j in seq_along(opfr_names)) {
+      #create a formula for linear model
+      formula <- as.formula(paste("log(", cyto_names[i], ") ~ log(", opfr_names[j], ") + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      #fit the linear model
+      model <- lm(formula, data = dt)
+      #store results as coeff, confint, pvalue
+      results[i, j] <- paste0(round(coef(model)[2], 2), " (", round(confint(model), 3)[2], ", ", round(confint(model), 3)[2, 2], ", p = ", round(summary(model)$coefficients[2, 4], 2), ")")
+    }
+  }
+
+  # Return the results as a table with column names
+  reg.estim <- as.data.frame(results, stringsAsFactors = FALSE)
+  colnames(reg.estim) <- opfr_names
+  rownames(reg.estim) <- cyto_names
+  return(reg.estim)
+}
+
+#run function
+fullmodel <- linear.models.adj(data_complete)
+ 
+#convert to dataframe
+full_model <- as.data.frame(fullmodel) %>%
+  #gather wide to long
+  gather(key = "OPFR", value = "Result")
+full_model$Result <- gsub('[()]', '/', full_model$Result)
+ 
+#reorganize for plotting
+full_model_p <- full_model %>% separate(col = Result, into = c("Beta", "other"), sep = "/") %>%
+  separate(col = other, into = c("conf_low", "conf_high", "p_value"), sep = ",") %>%
+  mutate(cyto_name = rep(cyto_names, times=4),
+         sample_type = case_when(grepl("_c", cyto_name) ~ "Cord",
+                                 grepl("_m", cyto_name) ~ "Maternal",
+                                 grepl("_p", cyto_name) ~ "Placenta"),
+         #cleaning p-value var and coding a significance var at alpha=0.05 level
+         p_value = as.numeric(gsub('p = ', '', p_value)),
+         significant = case_when(p_value < 0.05 ~ 2,
+                                 p_value < 0.1 & p_value >= 0.05 ~ 1,
+                                 p_value >= 0.1 ~ 0),
+         #create functional groups
+         functional_group = case_when(grepl("CL", cyto_name)|grepl("IL.8", cyto_name) ~ "Chemokine",
+                                      grepl("TNF", cyto_name)|grepl("IFN", cyto_name) ~ "Pro-inflammatory cytokine",
+                                      grepl("IL.4", cyto_name)|grepl("IL.10", cyto_name) ~ 
+                                      "Anti-inflammatory cytokine",
+                                      grepl("IL.6", cyto_name) ~ "Pro- & Anti-inflammatory cytokine",
+                                      grepl("28", cyto_name) ~ "Immunomodulatory cytokine",
+                                      grepl("crh", cyto_name) ~ "Hormone",
+                                      .default="Pro-inflammatory cytokine")) %>%
+  mutate_at(c("Beta", "conf_low", "conf_high"), as.numeric)
+
+#factoring sample type
+full_model_p$sample_type <-
+  factor(full_model_p$sample_type, levels= c("Maternal", "Placenta", "Cord"))
+#factoring significant
+full_model_p$significant <- 
+  factor(full_model_p$significant, levels = c(0:2),
+         labels=c("p ≥ 0.1", 
+                  "0.05 ≤ p < 0.1",
+                  "p < 0.05"))
+
+#create labels for all plots
+opfr_label <- c("BDCIPP", "DPHP", "BCEP", "BCIPP")
+names(opfr_label) <- c("BDCPP.sg.imp", "DPP.sg.imp", "BCEP.sg.imp", "BCIPP.sg.imp")
+ 
+#factor variables in desired order
+full_model_p$cytokine_label <- gsub('[.]', '-', str_extract(cyto_names, "[^_]*")) #replace . with -
+full_model_p$cytokine_label <- factor(full_model_p$cytokine_label,
+                                 levels=c("CCL2", "CCL3", "CCL4", "CCL17", "CCL22", "CXCL9",
+                                          "CXCL10", "IL-8", "IFN-Alpha", "IFN-Gamma",
+                                          "IL-1Beta", "IL-2","IL-7", "IL-12", "TNF-Alpha", "TNF-RI",
+                                          "IL-4", "IL-10", "IL-6", "IL-28A"
+                                           ))
+#reverse factor order for plotting purposes
+full_model_p$cytokine_label <- fct_rev(full_model_p$cytokine_label)
+
+full_model_p$functional_group <- factor(full_model_p$functional_group,
+                                        levels=(c("Chemokine", "Pro-inflammatory cytokine", 
+                                                "Anti-inflammatory cytokine", "Pro- & Anti-inflammatory cytokine",
+                                                "Immunomodulatory cytokine", "Hormone"))) 
+#keep only groups of interest
+full_model_p <- full_model_p %>% 
+  filter(functional_group %in% c("Chemokine","Pro-inflammatory cytokine", 
+                                 "Anti-inflammatory cytokine", "Pro- & Anti-inflammatory cytokine",
+                                 "Immunomodulatory cytokine"))
+
+full_model_plot <- full_model_p %>% na.omit()
+
+#forest plot
+plot_all_adj <- ggplot(full_model_plot, aes(x = Beta, y = cytokine_label, colour = significant)) +
+  geom_point(position=ggstance::position_dodgev(height=0.6), size=2) +
+  geom_errorbarh(aes(xmin = conf_low, xmax = conf_high, group = sample_type), 
+                 height = 0.3, position=ggstance::position_dodgev(height=0.6)) +
+  geom_vline(xintercept = 0, color = "black", linetype = "dashed", alpha = 0.5) +
+  #scale_color_brewer(palette = "Set1") +
+  scale_color_manual(values=c("black", "darkgray", "red")) +
+  facet_grid(rows=vars(sample_type), cols=vars(OPFR), 
+             labeller = labeller(OPFR = opfr_label), 
+             space="free_x", scales="free", drop=TRUE) +
+  theme_bw() +
+  xlab("Beta (95% Confidence Interval)") +
+  ylab("Cytokine") +
+  #ggtitle("") +
+  theme(legend.position = "none") +
+  labs(color = "p-value") +
+  theme(title = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 15, color = "black"),
+        axis.title.y = element_text(size = 15, color = "black"),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_rect(fill="white"),
+        strip.text.x = element_text(size = 12, colour = 'black'),
+        strip.text.y = element_text(size = 12, colour = 'black'),
+        legend.text = element_text(size = 12, colour = 'black'),,
+        legend.position = "top")
+
+png(file="Figure_1.png", width=800, height=800)
+plot_all_adj
+dev.off()
+```
+
+
+### FIGURE 2
+```{r forest plots, include=FALSE}
+linear.models.adj.pbde <- function(dt) {
+  # Create a matrix to store the results
+  results <- matrix(NA, nrow = length(cyto_names), ncol = length(pbde_names))
+  colnames(results) <- pbde_names
+  rownames(results) <- cyto_names
+
+  # Loop over VRM variables
+  for (i in seq_along(cyto_names)) {
+    # Loop over predictor variables (inside the first loop)
+    for (j in seq_along(pbde_names)) {
+      #create a formula for linear model
+      formula <- as.formula(paste("log(", cyto_names[i], ") ~ log(", pbde_names[j], ") + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      #fit the linear model
+      model <- lm(formula, data = dt)
+      #store results as coeff, confint, pvalue
+      results[i, j] <- paste0(round(coef(model)[2], 2), " (", round(confint(model), 3)[2], ", ", round(confint(model), 3)[2, 2], ", p = ", round(summary(model)$coefficients[2, 4], 2), ")")
+    }
+  }
+
+
+  # Return the results as a table with column names
+  reg.estim <- as.data.frame(results, stringsAsFactors = FALSE)
+  colnames(reg.estim) <- pbde_names
+  rownames(reg.estim) <- cyto_names
+  return(reg.estim)
+}
+
+#run function
+fullmodel <- linear.models.adj.pbde(data_complete)
+ 
+#convert to dataframe
+full_model <- as.data.frame(fullmodel) %>%
+  #gather wide to long
+  gather(key = "PBDE", value = "Result")
+full_model$Result <- gsub('[()]', '/', full_model$Result)
+ 
+#reorganize for plotting
+full_model_p <- full_model %>% separate(col = Result, into = c("Beta", "other"), sep = "/") %>%
+  separate(col = other, into = c("conf_low", "conf_high", "p_value"), sep = ",") %>%
+  mutate(cyto_name = rep(cyto_names, times=4),
+         sample_type = case_when(grepl("_c", cyto_name) ~ "Cord",
+                                 grepl("_m", cyto_name) ~ "Maternal",
+                                 grepl("_p", cyto_name) ~ "Placenta"),
+         #cleaning p-value var and coding a significance var at alpha=0.05 level
+         p_value = as.numeric(gsub('p = ', '', p_value)),
+         significant = case_when(p_value < 0.05 ~ 2,
+                                 p_value < 0.1 & p_value >= 0.05 ~ 1,
+                                 p_value >= 0.1 ~ 0),
+         #create functional groups
+         functional_group = case_when(grepl("CL", cyto_name)|grepl("IL.8", cyto_name) ~ "Chemokine",
+                                      grepl("TNF", cyto_name)|grepl("IFN", cyto_name) ~ "Pro-inflammatory cytokine",
+                                      grepl("IL.4", cyto_name)|grepl("IL.10", cyto_name) ~ 
+                                      "Anti-inflammatory cytokine",
+                                      grepl("IL.6", cyto_name) ~ "Pro- & Anti-inflammatory cytokine",
+                                      grepl("28", cyto_name) ~ "Immunomodulatory cytokine",
+                                      grepl("crh", cyto_name) ~ "Hormone",
+                                      .default="Pro-inflammatory cytokine")) %>%
+  mutate_at(c("Beta", "conf_low", "conf_high"), as.numeric)
+
+
+# LABELS
+#create labels for all plots
+pbde_label <- c("BDE-47", "BDE-99", "BDE-100", "BDE-153")
+names(pbde_label) <- c("bde47_lip", "bde99_lip", "bde100_lip", "bde153_lip")
+
+# FACTORS
+#factoring sample type
+full_model_p$sample_type <-
+  factor(full_model_p$sample_type, levels= c("Maternal", "Placenta", "Cord"))
+#factoring significant
+full_model_p$significant <- 
+  factor(full_model_p$significant, levels = c(0:2),
+         labels=c("p ≥ 0.1", 
+                  "0.05 ≤ p < 0.1",
+                  "p < 0.05")) 
+#factor variables in desired order
+full_model_p$PBDE <- factor(full_model_p$PBDE, levels=c("bde47_lip", "bde99_lip", "bde100_lip", "bde153_lip"))
+full_model_p$cytokine_label <- gsub('[.]', '-', str_extract(cyto_names, "[^_]*")) #replace . with -
+full_model_p$cytokine_label <- factor(full_model_p$cytokine_label, 
+                                 levels=c("CCL2", "CCL3", "CCL4", "CCL17", "CCL22", "CXCL9",
+                                          "CXCL10", "IL-8", "IFN-Alpha", "IFN-Gamma",
+                                          "IL-1Beta", "IL-2","IL-7", "IL-12", "TNF-Alpha", "TNF-RI",
+                                          "IL-4", "IL-10", "IL-6", "IL-28A"))
+#reverse factor order for plotting purposes
+full_model_p$cytokine_label <- fct_rev(full_model_p$cytokine_label)
+
+full_model_p$functional_group <- factor(full_model_p$functional_group,
+                                        levels=(c("Chemokine", "Pro-inflammatory cytokine", 
+                                                "Anti-inflammatory cytokine", "Pro- & Anti-inflammatory cytokine",
+                                                "Immunomodulatory cytokine", "Hormone"))) 
+
+#keep only groups of interest
+full_model_p <- full_model_p %>% 
+  filter(functional_group %in% c("Chemokine","Pro-inflammatory cytokine", 
+                                 "Anti-inflammatory cytokine", "Pro- & Anti-inflammatory cytokine",
+                                 "Immunomodulatory cytokine"))
+
+full_model_plot <- full_model_p %>% na.omit()
+
+#forest plot
+plot_all_adj <- ggplot(full_model_plot, aes(x = Beta, y = cytokine_label, colour = significant)) +
+  geom_point(position=ggstance::position_dodgev(height=0.6), size=2) +
+  geom_errorbarh(aes(xmin = conf_low, xmax = conf_high, group = sample_type), 
+                 height = 0.3, position=ggstance::position_dodgev(height=0.6)) +
+  geom_vline(xintercept = 0, color = "black", linetype = "dashed", alpha = 0.5) +
+  #scale_color_brewer(palette = "Set1") +
+  scale_color_manual(values=c("black", "darkgray", "red")) +
+  facet_grid(rows=vars(sample_type), cols=vars(PBDE), 
+             labeller = labeller(PBDE = pbde_label), 
+             space="free_x", scales="free") +
+  theme_bw() +
+  xlab("Beta (95% Confidence Interval)") +
+  ylab("Cytokine") +
+  #ggtitle("") +
+  theme(legend.position = "none") +
+  labs(color = "P-value") +
+  theme(title = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 15, color = "black"),
+        axis.title.y = element_text(size = 15, color = "black"),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 10, color = "black"),
+        strip.background = element_rect(fill="white"),
+        strip.text.x = element_text(size = 12, colour = 'black'),
+        strip.text.y = element_text(size = 12, colour = 'black'),
+        legend.text = element_text(size = 12, colour = 'black'),
+        legend.position = "top")
+
+png(file="Figure_2.png", width=800, height=800)
+plot_all_adj
+dev.off()
+```
+
+### Table S3 and S4. Tertile regression
+
+```{r tertile regression, include=FALSE}
+m3.tert.pbde <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(PBDE = character(0), Cytokine = character(0), 
+                        Estimate_mid = character(0), Estimate_upper = character(0),
+                        N = numeric(0))
+
+    # Loop over Cytokine variables
+  for (cyto_name in cyto_names) {
+    # Loop over PBDE variables
+    for (pbde_name in pbde_names) {
+      # Create factored tertiles for exposure
+      data$tertile <- cut(log(data_complete[,pbde_name]), 
+                          quantile(log(data_complete[,pbde_name]), c(0:3/3)), 
+                          labels = c("Lower", "Middle", "Upper"),
+                          include.lowest = TRUE)
+      
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ tertile + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      
+      # Fit the linear model
+      model <- lm(formula, data = data)
+      
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta1 <- round(coef(model)[2], 2)
+      coef.beta2 <- round(coef(model)[3], 2)
+      conf_intervals <- confint(model)
+      conf_low1 <- round(conf_intervals[2, 1], 2)
+      conf_high1 <- round(conf_intervals[2, 2], 2)
+      conf_low2 <- round(conf_intervals[3, 1], 2)
+      conf_high2 <- round(conf_intervals[3, 2], 2)
+      result <- data.frame(
+        PBDE = pbde_name,
+        Cytokine = cyto_name,
+        Estimate_mid = paste0(coef.beta1, " (", conf_low1, ", ", conf_high1, ")"),
+        Estimate_upper = paste0(coef.beta2, " (", conf_low2, ", ", conf_high2, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+m3.tert.opfr <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(OPFR = character(0), Cytokine = character(0), 
+                        Estimate_mid = character(0), Estimate_upper = character(0),
+                        N = numeric(0))
+
+    # Loop over Cytokine variables
+  for (cyto_name in cyto_names) {
+    # Loop over OPFR variables
+    for (opfr_name in opfr_names) {
+      # Create factored tertiles for exposure
+      data$tertile <- cut(log(data_complete[,opfr_name]), 
+                          quantile(log(data_complete[,opfr_name]), c(0:3/3)), 
+                          labels = c("Lower", "Middle", "Upper"),
+                          include.lowest = TRUE)
+      
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ tertile +  gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      
+      # Fit the linear model
+      model <- lm(formula, data = data)
+
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta1 <- round(coef(model)[2], 2)
+      coef.beta2 <- round(coef(model)[3], 2)
+      conf_intervals <- confint(model)
+      conf_low1 <- round(conf_intervals[2, 1], 2)
+      conf_high1 <- round(conf_intervals[2, 2], 2)
+      conf_low2 <- round(conf_intervals[3, 1], 2)
+      conf_high2 <- round(conf_intervals[3, 2], 2)
+      result <- data.frame(
+        OPFR = opfr_name,
+        Cytokine = cyto_name,
+        Estimate_mid = paste0(coef.beta1, " (", conf_low1, ", ", conf_high1, ")"),
+        Estimate_upper = paste0(coef.beta2, " (", conf_low2, ", ", conf_high2, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+
+# Run functions
+## Model 3
+m3_tert_pbde <- m3.tert.pbde(data_complete) %>% 
+ pivot_wider(names_from = PBDE,
+             values_from = c("Estimate_mid", "Estimate_upper")) %>% 
+ select(Cytokine, Estimate_mid_bde47_lip, Estimate_upper_bde47_lip,
+        Estimate_mid_bde99_lip, Estimate_upper_bde99_lip,
+        Estimate_mid_bde100_lip, Estimate_upper_bde100_lip,
+        Estimate_mid_bde153_lip, Estimate_upper_bde153_lip) %>% 
+  arrange(Cytokine) %>% 
+  # Ordering sample types (maternal -> placenta -> cord) %>% 
+  mutate(order_type = case_when(grepl("_m", Cytokine) ~ 1,
+                                grepl("_p", Cytokine) ~ 2,
+                                grepl("_c", Cytokine) ~ 3,
+                                .default = NA),
+         sample_type = case_when(grepl("_m", Cytokine) ~ "Maternal",
+                                grepl("_p", Cytokine) ~ "Placenta",
+                                grepl("_c", Cytokine) ~ "Cord",
+                                .default = NA),
+         Cytokine = str_extract(Cytokine, "[^_]+")) %>%
+  # Editing cytokine names
+  mutate(Cytokine = gsub('\\.', '-', Cytokine)) %>% 
+  # Sort rows
+  group_by(Cytokine) %>% 
+  arrange(order_type, .by_group = TRUE) %>% 
+  # Moving columns to front
+  select(Cytokine, sample_type, everything(), -order_type)
+# SUPPLEMENTAL TABLE 3 - PBDE TERTILE REGRESSION
+#utils::write.csv(m3_tert_pbde, "Supplemental Table 3.csv")
+m3_tert_pbde
+
+m3_tert_opfr <- m3.tert.opfr(data_complete) %>% 
+ pivot_wider(names_from = OPFR,
+             values_from = c("Estimate_mid", "Estimate_upper")) %>% 
+  select(Cytokine, Estimate_mid_BCEP.sg.imp, Estimate_upper_BCEP.sg.imp,
+        Estimate_mid_BCIPP.sg.imp, Estimate_upper_BCIPP.sg.imp,
+        Estimate_mid_BDCPP.sg.imp, Estimate_upper_BDCPP.sg.imp,
+        Estimate_mid_DPP.sg.imp, Estimate_upper_DPP.sg.imp) %>% 
+  arrange(Cytokine) %>% 
+  # Ordering sample types (maternal -> placenta -> cord) %>% 
+  mutate(order_type = case_when(grepl("_m", Cytokine) ~ 1,
+                                grepl("_p", Cytokine) ~ 2,
+                                grepl("_c", Cytokine) ~ 3,
+                                .default = NA),
+         sample_type = case_when(grepl("_m", Cytokine) ~ "Maternal",
+                                grepl("_p", Cytokine) ~ "Placenta",
+                                grepl("_c", Cytokine) ~ "Cord",
+                                .default = NA),
+         Cytokine = str_extract(Cytokine, "[^_]+")) %>%
+  # Editing cytokine names
+  mutate(Cytokine = gsub('\\.', '-', Cytokine)) %>% 
+  # Sort rows
+  group_by(Cytokine) %>% 
+  arrange(order_type, .by_group = TRUE) %>% 
+  # Moving columns to front
+  select(Cytokine, sample_type, everything(), -order_type)
+
+m3_tert_opfr
+# utils::write.csv(m3_tert_opfr, "Supplemental Table 4.csv")
+```
+
+
+### FIGURE 3. qgcomp
+
+```{r forest plot, include=FALSE}
+#DEFINE EXPOSURE NAMES
+exposure_names_opfr <- c("logBDCPP.sg",
+                    "logDPP.sg",
+                    "logBCEP.sg",
+                    "logBCIPP.sg")
+
+exposure_names_pbde <- c("logbde47_lip",
+                    "logbde99_lip",
+                    "logbde100_lip",
+                    "logbde153_lip"
+                    )
+
+exposure_names_mix <- c("logBDCPP.sg",
+                    "logDPP.sg",
+                    "logBCEP.sg",
+                    "logBCIPP.sg",
+                    "logbde47_lip",
+                    "logbde99_lip",
+                    "logbde100_lip",
+                    "logbde153_lip"
+                    )
+
+gcomp.mixture.model <- function(data) {
+  # Create empty dataframe for results
+  results <- matrix(NA, nrow = length(cyto_names), ncol = 1)
+  colnames(results) <- "Result"
+  rownames(results) <- cyto_names
+
+    # Loop over cytokine variables
+  for (cyto_name in cyto_names) {
+      
+      #OPFRs ONLY
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ logBDCPP.sg + logDPP.sg + logBCEP.sg + logBCIPP.sg + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model_opfr <- qgcomp.noboot(formula, 
+                             expnms = exposure_names_opfr,
+                             data = data,
+                             family=gaussian(),
+                             q=4)
+   
+      #PBDEs ONLY
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ logbde47_lip + logbde99_lip + logbde100_lip + logbde153_lip + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model_pbde <- qgcomp.noboot(formula, 
+                             expnms = exposure_names_pbde,
+                             data = data,
+                             family=gaussian(),
+                             q=4)
+      
+      #OPFRs AND PBDEs
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ logBDCPP.sg + logDPP.sg + logBCEP.sg + logBCIPP.sg + logbde47_lip + logbde99_lip + logbde100_lip + logbde153_lip + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model_mix <- qgcomp.noboot(formula, 
+                             expnms = exposure_names_mix,
+                             data = data,
+                             family=gaussian(),
+                             q=4)
+
+      results[cyto_name,] <- paste0(round(coef(model_opfr)[2], 2), " (",   
+                                    round(confint(model_opfr), 2)[2], ", ", 
+                                    round(confint(model_opfr), 2)[2, 2], ", p = ", 
+                                    round(summary(model_opfr)$coefficients[2, 5], 2), ")/", 
+                                    round(coef(model_pbde)[2], 2), " (", 
+                                    round(confint(model_pbde), 2)[2], ", ", 
+                                    round(confint(model_pbde), 2)[2, 2], ", p = ", 
+                                    round(summary(model_pbde)$coefficients[2, 5], 2), ")/", 
+                                    round(coef(model_mix)[2], 2), " (", 
+                                    round(confint(model_mix), 2)[2], ", ", 
+                                    round(confint(model_mix), 2)[2, 2], ", p = ", 
+                                    round(summary(model_mix)$coefficients[2, 5], 2), ")")
+       }
+  
+  reg.estim <- as.data.frame(results, stringsAsFactors = FALSE)
+  colnames(reg.estim) <- "Result"
+  rownames(reg.estim) <- cyto_names
+  return(reg.estim)
+}
+
+# CREATING COMPLETE CASE DATASET FOR QGCOMP MODELS
+data_complete_qgcomp <- data_complete[complete.cases(data_complete[,c("logBDCPP.sg", "logDPP.sg", "logBCEP.sg", "logBCIPP.sg",
+                                                                      "logbde47_lip", "logbde99_lip", "logbde100_lip", 
+                                                                      "logbde153_lip", "gest.age.procedure", "mat_age", "mat_educ", 
+                                                                      "insurance", "bmi.procedure")])]
+# RUNNING QGCOMP MODEL
+results_qgcomp <- gcomp.mixture.model(data_complete_qgcomp)
+
+#convert to dataframe
+full_model <- as.data.frame(results_qgcomp)
+#separate models into columns first
+full_model <- full_model %>% 
+  separate(col = Result, into = c("opfr", "pbde", "mix"), sep = "/") %>% 
+  rownames_to_column(var="cyto_name") 
+table_qgcomp <- full_model
+
+#separate into temp data frames
+temp_opfr <- full_model %>% 
+  select(cyto_name, opfr) %>% 
+  mutate(opfr = gsub('[()]', '/', full_model$opfr),
+         model_type = "OPFR") %>% 
+  separate(col = opfr, into = c("Beta", "other"), sep = "/") %>%
+  separate(col = other, into = c("conf_low", "conf_high", "p_value"), sep = ",")
+temp_pbde <- full_model %>% 
+  select(cyto_name, pbde) %>% 
+  mutate(pbde = gsub('[()]', '/', full_model$pbde),
+         model_type = "PBDE") %>% 
+  separate(col = pbde, into = c("Beta", "other"), sep = "/") %>%
+  separate(col = other, into = c("conf_low", "conf_high", "p_value"), sep = ",")
+temp_mix <- full_model %>% 
+  select(cyto_name, mix) %>% 
+  mutate(mix = gsub('[()]', '/', full_model$mix),
+         model_type = "Mix") %>% 
+  separate(col = mix, into = c("Beta", "other"), sep = "/") %>%
+  separate(col = other, into = c("conf_low", "conf_high", "p_value"), sep = ",")
+
+#merge temp data frames into one
+full_model_p <- temp_opfr %>% 
+  full_join(temp_pbde) %>% 
+  full_join(temp_mix)
+
+#reorganize for plotting
+full_model_p <- full_model_p %>% 
+  mutate(sample_type = case_when(grepl("_c", cyto_name) ~ "Cord",
+                                 grepl("_m", cyto_name) ~ "Maternal",
+                                 grepl("_p", cyto_name) ~ "Placenta"),
+         #cleaning p-value var and coding a significance var at alpha=0.05 level
+         p_value = as.numeric(gsub('p = ', '', p_value)),
+         significant = case_when(p_value < 0.05 ~ 2,
+                                 p_value < 0.1 & p_value >= 0.05 ~ 1,
+                                 p_value >= 0.1 ~ 0),
+         #create functional groups
+         functional_group = case_when(grepl("CL", cyto_name)|grepl("IL.8", cyto_name) ~ "Chemokine",
+                                      grepl("TNF", cyto_name)|grepl("IFN", cyto_name) ~ "Pro-inflammatory cytokine",
+                                      grepl("IL.4", cyto_name)|grepl("IL.10", cyto_name) ~ 
+                                      "Anti-inflammatory cytokine",
+                                      grepl("IL.6", cyto_name) ~ "Pro- & Anti-inflammatory cytokine",
+                                      grepl("28", cyto_name) ~ "Immunomodulatory cytokine",
+                                      grepl("crh", cyto_name) ~ "Hormone",
+                                      .default="Pro-inflammatory cytokine")) %>%
+  mutate_at(c("Beta", "conf_low", "conf_high"), as.numeric)
+ 
+# LABELS
+#create labels for all plots
+model_label <- c("OPFR Mixture", "PBDE Mixture", "OPFR and PBDE Mixture")
+names(model_label) <- c("OPFR", "PBDE", "Mix")
+
+# FACTORS
+#factoring sample type
+full_model_p$sample_type <-
+  factor(full_model_p$sample_type, levels= c("Maternal", "Placenta", "Cord"))
+#factoring significant
+full_model_p$significant <- 
+  factor(full_model_p$significant, levels = c(0:2),
+         labels=c("p ≥ 0.1", 
+                  "0.05 ≤ p < 0.1",
+                  "p < 0.05"))
+#factor variables in desired order
+full_model_p$model_type <- factor(full_model_p$model_type, levels=c("OPFR", "PBDE", "Mix"))
+full_model_p$cytokine_label <- gsub('[.]', '-', str_extract(cyto_names, "[^_]*")) #replace . with -
+full_model_p$cytokine_label <- factor(full_model_p$cytokine_label, 
+                                 levels=c("CCL2", "CCL3", "CCL4", "CCL17", "CCL22", "CXCL9",
+                                          "CXCL10", "IL-8", "IFN-Alpha", "IFN-Gamma",
+                                          "IL-1Beta", "IL-2","IL-7", "IL-12", "TNF-Alpha", "TNF-RI",
+                                          "IL-4", "IL-10", "IL-6", "IL-28A"))
+#reverse factor order for plotting purposes
+full_model_p$cytokine_label <- fct_rev(full_model_p$cytokine_label)
+
+full_model_p$functional_group <- factor(full_model_p$functional_group,
+                                        levels=(c("Chemokine", "Pro-inflammatory cytokine", 
+                                                "Anti-inflammatory cytokine", "Pro- & Anti-inflammatory cytokine",
+                                                "Immunomodulatory cytokine", "Hormone"))) 
+#keep only groups of interest
+full_model_p <- full_model_p %>% 
+  filter(functional_group %in% c("Chemokine", "Pro-inflammatory cytokine", 
+                                 "Anti-inflammatory cytokine", "Pro- & Anti-inflammatory cytokine",
+                                 "Immunomodulatory cytokine"))
+
+full_model_plot <- full_model_p %>% na.omit()
+
+#forest plot
+plot_all_adj <- ggplot(full_model_plot, aes(x = Beta, y = cytokine_label, colour=significant)) +
+  geom_point(position=ggstance::position_dodgev(height=0.6), size=2) +
+  geom_errorbarh(aes(xmin = conf_low, xmax = conf_high, group = sample_type), 
+                 height = 0.3, position=ggstance::position_dodgev(height=0.6)) +
+  geom_vline(xintercept = 0, color = "black", linetype = "dashed", alpha = 0.5) +
+  scale_color_manual(values=c("black", "darkgray", "red")) +
+  facet_grid(rows=vars(sample_type), cols=vars(model_type), 
+             labeller = labeller(model_type = model_label),
+             scales = "free", space="free_x") +
+  theme_bw() +
+  xlab("Beta (95% Confidence Interval)") +
+  ylab("Cytokine") +
+  #ggtitle("Oxidative Stress and VRM Outcome") +
+  theme(legend.position = "none") +
+  labs(color = "p-value") +
+  theme(title = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 15, color = "black"),
+        axis.title.y = element_text(size = 15, color = "black"),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.text.y = element_text(size = 12, color = "black"),
+        strip.background = element_rect(fill="white"),
+        strip.text.x = element_text(size = 12, colour = 'black'),
+        strip.text.y = element_text(size = 12, colour = 'black'),
+        legend.text = element_text(size = 12, colour = 'black'),
+        legend.position = "top")
+
+png(file="Figure_3.png", width=800, height=800)
+plot_all_adj
+dev.off()
+```
+
+
+## Table S5. qgcomp output
+```{r gqcomp table}
+#Rounding
+temp_opfr_table <- temp_opfr %>% 
+  mutate(conf_low = round(as.numeric(conf_low), 2),
+         conf_high = round(as.numeric(conf_high), 2))
+
+#separate into temp data frames
+temp_opfr_table <- table_qgcomp %>% 
+  select(cyto_name, opfr) %>% 
+  separate(col = opfr, into = c("Estimate", "p_value"), sep = ", p = ") %>%
+  mutate(Estimate = paste0(Estimate, ")"),
+         p_value = as.numeric(gsub(')', '', p_value)),
+         model_type = "OPFR")
+temp_pbde_table <- table_qgcomp %>% 
+  select(cyto_name, pbde) %>% 
+  separate(col = pbde, into = c("Estimate", "p_value"), sep = ", p = ") %>%
+  mutate(Estimate = paste0(Estimate, ")"),
+         p_value = as.numeric(gsub(')', '', p_value)),
+         model_type = "PBDE")
+temp_mix_table <- table_qgcomp %>% 
+  select(cyto_name, mix) %>% 
+  separate(col = mix, into = c("Estimate", "p_value"), sep = ", p = ") %>%
+  mutate(Estimate = paste0(Estimate, ")"),
+         p_value = as.numeric(gsub(')', '', p_value)),
+         model_type = "Mix")
+
+#merge temp data frames into one
+full_table_qgcomp <- temp_opfr_table %>% 
+  full_join(temp_pbde_table) %>% 
+  full_join(temp_mix_table) %>% 
+  #flip from long to wide table format
+  pivot_wider(names_from = model_type,
+              values_from = c("Estimate", "p_value")) %>% 
+  # Ordering sample types (maternal -> placenta -> cord) %>% 
+  mutate(order_type = case_when(grepl("_m", cyto_name) ~ 1,
+                                grepl("_p", cyto_name) ~ 2,
+                                grepl("_c", cyto_name) ~ 3,
+                                .default = NA),
+         sample_type = case_when(grepl("_m", cyto_name) ~ "Maternal",
+                                grepl("_p", cyto_name) ~ "Placenta",
+                                grepl("_c", cyto_name) ~ "Cord",
+                                .default = NA),
+         cyto_name = str_extract(cyto_name, "[^_]+")) %>%
+  # Editing cytokine names
+  mutate(cyto_name = gsub('\\.', '-', cyto_name)) %>% 
+  # Sort rows
+  group_by(cyto_name) %>% 
+  arrange(order_type, .by_group = TRUE) %>% 
+  # Reorder columns
+  select(cyto_name, sample_type, Estimate_OPFR, Estimate_PBDE, Estimate_Mix, -order_type)
+
+# SUPPLEMENTAL TABLE 5
+full_table_qgcomp
+#vutils::write.csv(full_table_qgcomp, "Supplemental Table 5 qgcomp.csv")
+```
+
+### Table S6 and S4. QGCOMP WEIGHTS
+```{r opfr, include=FALSE}
+# FUNCTION TO PRINT WEIGHTS
+gcomp.mixture.weights.opfr <- function(data) {
+  # Create empty dataframe for results
+  results <- matrix(NA, nrow = length(cyto_names), ncol = 1)
+  colnames(results) <- "Result"
+  rownames(results) <- cyto_names
+
+    # Loop over cytokine variables
+  for (cyto_name in cyto_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ logBDCPP.sg + logDPP.sg + logBCEP.sg + logBCIPP.sg + gest.age.procedure + mat_age + mat_educ + insurance + bmi.procedure"))
+      # Fit the linear model
+      model <- qgcomp.noboot(formula, 
+                             expnms = exposure_names_opfr,
+                             data = data,
+                             family=gaussian(),
+                             q=4)
+      results[cyto_name,] <- paste0("pos", (names(model$pos.weights)), " ",
+                                    (round(model$pos.weights , 2)), " /",
+                                    "neg", (names(model$neg.weights)), " ",
+                                    (round(model$neg.weights , 2)), " /",
+                                    collapse=" ")
+    }
+  
+  reg.estim <- as.data.frame(results, stringsAsFactors = FALSE)
+  colnames(reg.estim) <- "Result"
+  rownames(reg.estim) <- cyto_names
+  return(reg.estim)
+}
+
+results_weights <- gcomp.mixture.weights.opfr(data_complete_qgcomp)
+
+#convert to dataframe
+results_weights <- as.data.frame(results_weights)
+
+#reorganize for plotting
+full_model_w_opfr <- results_weights %>% separate(col = Result, 
+                                             # Some values are duplicated so we have to construct extra
+                                             into = c("temp_1", "temp_2", "temp_3", "temp_4",
+                                                      "temp_5", "temp_6", "temp_7"),
+                                             sep="/") %>%
+  #construct actual variables
+  mutate(logBDCPP = case_when(grepl("BDCPP", temp_1) ~ temp_1,
+                              grepl("BDCPP", temp_2) ~ temp_2,
+                              grepl("BDCPP", temp_3) ~ temp_3,
+                              grepl("BDCPP", temp_4) ~ temp_4,
+                              grepl("BDCPP", temp_5) ~ temp_5,
+                              grepl("BDCPP", temp_6) ~ temp_6,
+                              grepl("BDCPP", temp_7) ~ temp_7),
+         logDPP = case_when(grepl("DPP", temp_1) ~ temp_1,
+                              grepl("DPP", temp_2) ~ temp_2,
+                              grepl("DPP", temp_3) ~ temp_3,
+                              grepl("DPP", temp_4) ~ temp_4,
+                              grepl("DPP", temp_5) ~ temp_5,
+                              grepl("DPP", temp_6) ~ temp_6,
+                              grepl("DPP", temp_7) ~ temp_7),
+         logBCEP = case_when(grepl("BCEP", temp_1) ~ temp_1,
+                              grepl("BCEP", temp_2) ~ temp_2,
+                              grepl("BCEP", temp_3) ~ temp_3,
+                              grepl("BCEP", temp_4) ~ temp_4,
+                              grepl("BCEP", temp_5) ~ temp_5,
+                              grepl("BCEP", temp_6) ~ temp_6,
+                              grepl("BCEP", temp_7) ~ temp_7),
+         logBCIPP = case_when(grepl("BCIPP", temp_1) ~ temp_1,
+                              grepl("BCIPP", temp_2) ~ temp_2,
+                              grepl("BCIPP", temp_3) ~ temp_3,
+                              grepl("BCIPP", temp_4) ~ temp_4,
+                              grepl("BCIPP", temp_5) ~ temp_5,
+                              grepl("BCIPP", temp_6) ~ temp_6,
+                              grepl("BCIPP", temp_7) ~ temp_7)) %>%
+  #remove string text
+  mutate(logBDCPP = gsub("logBDCPP.sg ", "", logBDCPP),
+         logDPP = gsub("logDPP.sg ", "", logDPP),
+         logBCEP = gsub("logBCEP.sg ", "", logBCEP),
+         logBCIPP = gsub("logBCIPP.sg ", "", logBCIPP)) %>% 
+  #replace pos/neg with sign
+   mutate(logBDCPP = gsub("pos", "", logBDCPP),
+         logDPP = gsub("pos", "", logDPP),
+         logBCEP = gsub("pos", "", logBCEP),
+         logBCIPP = gsub("pos", "", logBCIPP)) %>%
+   mutate(logBDCPP = gsub("neg", "-", logBDCPP),
+         logDPP = gsub("neg", "-", logDPP),
+         logBCEP = gsub("neg", "-", logBCEP),
+         logBCIPP = gsub("neg", "-", logBCIPP)) %>% 
+  #drop temp variables
+  select(-temp_1, -temp_2, -temp_3, -temp_4, -temp_5, -temp_6, -temp_7) %>% 
+  rownames_to_column(var="cyto_name") %>% 
+  mutate_at(c("logBDCPP", "logDPP", "logBCEP", "logBCIPP"), as.numeric)
+
+# Quick output as datatable
+DT::datatable(full_model_w_opfr, rownames = FALSE)
+```
+
+```{r pbde, include=FALSE}
+# FUNCTION TO PRINT WEIGHTS
+gcomp.mixture.weights.pbde <- function(data) {
+  # Create empty dataframe for results
+  results <- matrix(NA, nrow = length(cyto_names), ncol = 1)
+  colnames(results) <- "Result"
+  rownames(results) <- cyto_names
+
+    # Loop over cytokine variables
+  for (cyto_name in cyto_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ logbde47_lip + logbde99_lip + logbde100_lip + logbde153_lip + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model <- qgcomp.noboot(formula, 
+                             expnms = exposure_names_pbde,
+                             data = data,
+                             family=gaussian(),
+                             q=4)
+      results[cyto_name,] <- paste0("pos", (names(model$pos.weights)), " ",
+                                    (round(model$pos.weights , 2)), " /",
+                                    "neg", (names(model$neg.weights)), " ",
+                                    (round(model$neg.weights , 2)), " /",
+                                    collapse=" ")
+    }
+  
+  reg.estim <- as.data.frame(results, stringsAsFactors = FALSE)
+  colnames(reg.estim) <- "Result"
+  rownames(reg.estim) <- cyto_names
+  return(reg.estim)
+}
+
+results_weights <- gcomp.mixture.weights.pbde(data_complete_qgcomp)
+
+#convert to dataframe
+results_weights <- as.data.frame(results_weights)
+
+#reorganize for plotting
+full_model_w_pbde <- results_weights %>% separate(col = Result, 
+                                             # Some values are duplicated so we have to construct extra
+                                             into = c("temp_1", "temp_2", "temp_3", "temp_4",
+                                                      "temp_5", "temp_6", "temp_7"),
+                                             sep="/") %>%
+  #construct actual variables
+  mutate(logbde47 = case_when(grepl("bde47", temp_1) ~ temp_1,
+                              grepl("bde47", temp_2) ~ temp_2,
+                              grepl("bde47", temp_3) ~ temp_3,
+                              grepl("bde47", temp_4) ~ temp_4,
+                              grepl("bde47", temp_5) ~ temp_5,
+                              grepl("bde47", temp_6) ~ temp_6,
+                              grepl("bde47", temp_7) ~ temp_7),
+         logbde99 = case_when(grepl("bde99", temp_1) ~ temp_1,
+                              grepl("bde99", temp_2) ~ temp_2,
+                              grepl("bde99", temp_3) ~ temp_3,
+                              grepl("bde99", temp_4) ~ temp_4,
+                              grepl("bde99", temp_5) ~ temp_5,
+                              grepl("bde99", temp_6) ~ temp_6,
+                              grepl("bde99", temp_7) ~ temp_7),
+         logbde100 = case_when(grepl("bde100", temp_1) ~ temp_1,
+                              grepl("bde100", temp_2) ~ temp_2,
+                              grepl("bde100", temp_3) ~ temp_3,
+                              grepl("bde100", temp_4) ~ temp_4,
+                              grepl("bde100", temp_5) ~ temp_5,
+                              grepl("bde100", temp_6) ~ temp_6,
+                              grepl("bde100", temp_7) ~ temp_7),
+         logbde153 = case_when(grepl("bde153", temp_1) ~ temp_1,
+                              grepl("bde153", temp_2) ~ temp_2,
+                              grepl("bde153", temp_3) ~ temp_3,
+                              grepl("bde153", temp_4) ~ temp_4,
+                              grepl("bde153", temp_5) ~ temp_5,
+                              grepl("bde153", temp_6) ~ temp_6,
+                              grepl("bde153", temp_7) ~ temp_7)) %>%
+  #remove string text
+  mutate(logbde47 = gsub("logbde47_lip ", "", logbde47),
+         logbde99 = gsub("logbde99_lip ", "", logbde99),
+         logbde100 = gsub("logbde100_lip ", "", logbde100),
+         logbde153 = gsub("logbde153_lip ", "", logbde153)) %>% 
+  #replace pos/neg with sign
+   mutate(logbde47 = gsub("pos", "", logbde47),
+         logbde99 = gsub("pos", "", logbde99),
+         logbde100 = gsub("pos", "", logbde100),
+         logbde153 = gsub("pos", "", logbde153)) %>%
+   mutate(logbde47 = gsub("neg", "-", logbde47),
+         logbde99 = gsub("neg", "-", logbde99),
+         logbde100 = gsub("neg", "-", logbde100),
+         logbde153 = gsub("neg", "-", logbde153)) %>% 
+  #drop temp variables
+  select(-temp_1, -temp_2, -temp_3, -temp_4, -temp_5, -temp_6, -temp_7) %>% 
+  rownames_to_column(var="cyto_name") %>% 
+  mutate_at(c("logbde47", "logbde99", "logbde100", "logbde153"), as.numeric)
+```
+
+```{r mix, include=FALSE}
+# FUNCTION TO PRINT WEIGHTS
+gcomp.mixture.weights.mix <- function(data) {
+  # Create empty dataframe for results
+  results <- matrix(NA, nrow = length(cyto_names), ncol = 1)
+  colnames(results) <- "Result"
+  rownames(results) <- cyto_names
+
+    # Loop over cytokine variables
+  for (cyto_name in cyto_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste("log(", cyto_name, ") ~ logBDCPP.sg + logDPP.sg + logBCEP.sg + logBCIPP.sg + logbde47_lip + logbde99_lip + logbde100_lip + logbde153_lip + gest.age.procedure +as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model <- qgcomp.noboot(formula, 
+                             expnms = exposure_names_mix,
+                             data = data,
+                             family=gaussian(),
+                             q=4)
+      results[cyto_name,] <- paste0("pos", (names(model$pos.weights)), " ",
+                                    (round(model$pos.weights , 2)), " /",
+                                    "neg", (names(model$neg.weights)), " ",
+                                    (round(model$neg.weights , 2)), " /",
+                                    collapse=" ")
+    }
+  
+  reg.estim <- as.data.frame(results, stringsAsFactors = FALSE)
+  colnames(reg.estim) <- "Result"
+  rownames(reg.estim) <- cyto_names
+  return(reg.estim)
+}
+
+results_weights <- gcomp.mixture.weights.mix(data_complete_qgcomp)
+
+#convert to dataframe
+results_weights <- as.data.frame(results_weights)
+
+#reorganize for plotting
+full_model_w_mix <- results_weights %>% separate(col = Result, 
+                                             # Some values are duplicated so we have to construct extra
+                                             into = c("temp_1", "temp_2", "temp_3", "temp_4",
+                                                      "temp_5", "temp_6", "temp_7", "temp_8",
+                                                      "temp_9", "temp_10", "temp_11", "temp_12",
+                                                      "temp_13", "temp_14", "temp_15"
+                                                      ),
+                                             sep="/") %>%
+  #construct actual variables
+  mutate(logBDCPP = case_when(grepl("BDCPP", temp_1) ~ temp_1,
+                              grepl("BDCPP", temp_2) ~ temp_2,
+                              grepl("BDCPP", temp_3) ~ temp_3,
+                              grepl("BDCPP", temp_4) ~ temp_4,
+                              grepl("BDCPP", temp_5) ~ temp_5,
+                              grepl("BDCPP", temp_6) ~ temp_6,
+                              grepl("BDCPP", temp_7) ~ temp_7,
+                              grepl("BDCPP", temp_8) ~ temp_8,
+                              grepl("BDCPP", temp_9) ~ temp_9,
+                              grepl("BDCPP", temp_10) ~ temp_10,
+                              grepl("BDCPP", temp_11) ~ temp_11,
+                              grepl("BDCPP", temp_12) ~ temp_12,
+                              grepl("BDCPP", temp_13) ~ temp_13,
+                              grepl("BDCPP", temp_14) ~ temp_14,
+                              grepl("BDCPP", temp_15) ~ temp_15),
+         logDPP = case_when(grepl("DPP", temp_1) ~ temp_1,
+                              grepl("DPP", temp_2) ~ temp_2,
+                              grepl("DPP", temp_3) ~ temp_3,
+                              grepl("DPP", temp_4) ~ temp_4,
+                              grepl("DPP", temp_5) ~ temp_5,
+                              grepl("DPP", temp_6) ~ temp_6,
+                              grepl("DPP", temp_7) ~ temp_7,
+                              grepl("DPP", temp_8) ~ temp_8,
+                              grepl("DPP", temp_9) ~ temp_9,
+                              grepl("DPP", temp_10) ~ temp_10,
+                              grepl("DPP", temp_11) ~ temp_11,
+                              grepl("DPP", temp_12) ~ temp_12,
+                              grepl("DPP", temp_13) ~ temp_13,
+                              grepl("DPP", temp_14) ~ temp_14,
+                              grepl("DPP", temp_15) ~ temp_15),
+         logBCEP = case_when(grepl("BCEP", temp_1) ~ temp_1,
+                              grepl("BCEP", temp_2) ~ temp_2,
+                              grepl("BCEP", temp_3) ~ temp_3,
+                              grepl("BCEP", temp_4) ~ temp_4,
+                              grepl("BCEP", temp_5) ~ temp_5,
+                              grepl("BCEP", temp_6) ~ temp_6,
+                              grepl("BCEP", temp_7) ~ temp_7,
+                              grepl("BCEP", temp_8) ~ temp_8,
+                              grepl("BCEP", temp_9) ~ temp_9,
+                              grepl("BCEP", temp_10) ~ temp_10,
+                              grepl("BCEP", temp_11) ~ temp_11,
+                              grepl("BCEP", temp_12) ~ temp_12,
+                              grepl("BCEP", temp_13) ~ temp_13,
+                              grepl("BCEP", temp_14) ~ temp_14,
+                              grepl("BCEP", temp_15) ~ temp_15),
+         logBCIPP = case_when(grepl("BCIPP", temp_1) ~ temp_1,
+                              grepl("BCIPP", temp_2) ~ temp_2,
+                              grepl("BCIPP", temp_3) ~ temp_3,
+                              grepl("BCIPP", temp_4) ~ temp_4,
+                              grepl("BCIPP", temp_5) ~ temp_5,
+                              grepl("BCIPP", temp_6) ~ temp_6,
+                              grepl("BCIPP", temp_7) ~ temp_7,
+                              grepl("BCIPP", temp_8) ~ temp_8,
+                              grepl("BCIPP", temp_9) ~ temp_9,
+                              grepl("BCIPP", temp_10) ~ temp_10,
+                              grepl("BCIPP", temp_11) ~ temp_11,
+                              grepl("BCIPP", temp_12) ~ temp_12,
+                              grepl("BCIPP", temp_13) ~ temp_13,
+                              grepl("BCIPP", temp_14) ~ temp_14,
+                              grepl("BCIPP", temp_15) ~ temp_15),
+         logbde47 = case_when(grepl("bde47", temp_1) ~ temp_1,
+                              grepl("bde47", temp_2) ~ temp_2,
+                              grepl("bde47", temp_3) ~ temp_3,
+                              grepl("bde47", temp_4) ~ temp_4,
+                              grepl("bde47", temp_5) ~ temp_5,
+                              grepl("bde47", temp_6) ~ temp_6,
+                              grepl("bde47", temp_7) ~ temp_7,
+                              grepl("bde47", temp_8) ~ temp_8,
+                              grepl("bde47", temp_9) ~ temp_9,
+                              grepl("bde47", temp_10) ~ temp_10,
+                              grepl("bde47", temp_11) ~ temp_11,
+                              grepl("bde47", temp_12) ~ temp_12,
+                              grepl("bde47", temp_13) ~ temp_13,
+                              grepl("bde47", temp_14) ~ temp_14,
+                              grepl("bde47", temp_15) ~ temp_15),
+         logbde99 = case_when(grepl("bde99", temp_1) ~ temp_1,
+                              grepl("bde99", temp_2) ~ temp_2,
+                              grepl("bde99", temp_3) ~ temp_3,
+                              grepl("bde99", temp_4) ~ temp_4,
+                              grepl("bde99", temp_5) ~ temp_5,
+                              grepl("bde99", temp_6) ~ temp_6,
+                              grepl("bde99", temp_7) ~ temp_7,
+                              grepl("bde99", temp_8) ~ temp_8,
+                              grepl("bde99", temp_9) ~ temp_9,
+                              grepl("bde99", temp_10) ~ temp_10,
+                              grepl("bde99", temp_11) ~ temp_11,
+                              grepl("bde99", temp_12) ~ temp_12,
+                              grepl("bde99", temp_13) ~ temp_13,
+                              grepl("bde99", temp_14) ~ temp_14,
+                              grepl("bde99", temp_15) ~ temp_15),
+         logbde100 = case_when(grepl("bde100", temp_1) ~ temp_1,
+                              grepl("bde100", temp_2) ~ temp_2,
+                              grepl("bde100", temp_3) ~ temp_3,
+                              grepl("bde100", temp_4) ~ temp_4,
+                              grepl("bde100", temp_5) ~ temp_5,
+                              grepl("bde100", temp_6) ~ temp_6,
+                              grepl("bde100", temp_7) ~ temp_7,
+                              grepl("bde100", temp_8) ~ temp_8,
+                              grepl("bde100", temp_9) ~ temp_9,
+                              grepl("bde100", temp_10) ~ temp_10,
+                              grepl("bde100", temp_11) ~ temp_11,
+                              grepl("bde100", temp_12) ~ temp_12,
+                              grepl("bde100", temp_13) ~ temp_13,
+                              grepl("bde100", temp_14) ~ temp_14,
+                              grepl("bde100", temp_15) ~ temp_15),
+         logbde153 = case_when(grepl("bde153", temp_1) ~ temp_1,
+                              grepl("bde153", temp_2) ~ temp_2,
+                              grepl("bde153", temp_3) ~ temp_3,
+                              grepl("bde153", temp_4) ~ temp_4,
+                              grepl("bde153", temp_5) ~ temp_5,
+                              grepl("bde153", temp_6) ~ temp_6,
+                              grepl("bde153", temp_7) ~ temp_7,
+                              grepl("bde153", temp_8) ~ temp_8,
+                              grepl("bde153", temp_9) ~ temp_9,
+                              grepl("bde153", temp_10) ~ temp_10,
+                              grepl("bde153", temp_11) ~ temp_11,
+                              grepl("bde153", temp_12) ~ temp_12,
+                              grepl("bde153", temp_13) ~ temp_13,
+                              grepl("bde153", temp_14) ~ temp_14,
+                              grepl("bde153", temp_15) ~ temp_15)) %>%
+  #remove string text
+  mutate(logBDCPP = gsub("logBDCPP.sg ", "", logBDCPP),
+         logDPP = gsub("logDPP.sg ", "", logDPP),
+         logBCEP = gsub("logBCEP.sg ", "", logBCEP),
+         logBCIPP = gsub("logBCIPP.sg ", "", logBCIPP),
+         logbde47 = gsub("logbde47_lip ", "", logbde47),
+         logbde99 = gsub("logbde99_lip ", "", logbde99),
+         logbde100 = gsub("logbde100_lip ", "", logbde100),
+         logbde153 = gsub("logbde153_lip ", "", logbde153)) %>% 
+  #replace pos/neg with sign
+   mutate(logBDCPP = gsub("pos", "", logBDCPP),
+         logDPP = gsub("pos", "", logDPP),
+         logBCEP = gsub("pos", "", logBCEP),
+         logBCIPP = gsub("pos", "", logBCIPP),
+         logbde47 = gsub("pos", "", logbde47),
+         logbde99 = gsub("pos", "", logbde99),
+         logbde100 = gsub("pos", "", logbde100),
+         logbde153 = gsub("pos", "", logbde153)) %>%
+   mutate(logBDCPP = gsub("neg", "-", logBDCPP),
+         logDPP = gsub("neg", "-", logDPP),
+         logBCEP = gsub("neg", "-", logBCEP),
+         logBCIPP = gsub("neg", "-", logBCIPP),
+         logbde47 = gsub("neg", "-", logbde47),
+         logbde99 = gsub("neg", "-", logbde99),
+         logbde100 = gsub("neg", "-", logbde100),
+         logbde153 = gsub("neg", "-", logbde153)) %>% 
+  #drop temp variables
+  select(-temp_1, -temp_2, -temp_3, -temp_4, -temp_5, -temp_6, -temp_7, -temp_8,
+         -temp_9, -temp_10, -temp_11, -temp_12, -temp_13, -temp_14, -temp_15) %>% 
+  rownames_to_column(var="cyto_name") %>% 
+  mutate_at(c("logBDCPP", "logDPP", "logBCEP", "logBCIPP",
+              "logbde47", "logbde99", "logbde100", "logbde153"), as.numeric)
+```
+
+```{r tables, include=FALSE}
+# OPFRS only and PBDEs only table
+table_weights_only <- full_model_w_opfr %>% 
+  full_join(full_model_w_pbde, by="cyto_name") %>% 
+  # Ordering sample types (maternal -> placenta -> cord) %>% 
+  mutate(order_type = case_when(grepl("_m", cyto_name) ~ 1,
+                                grepl("_p", cyto_name) ~ 2,
+                                grepl("_c", cyto_name) ~ 3,
+                                .default = NA),
+         sample_type = case_when(grepl("_m", cyto_name) ~ "Maternal",
+                                grepl("_p", cyto_name) ~ "Placenta",
+                                grepl("_c", cyto_name) ~ "Cord",
+                                .default = NA),
+         cyto_name = str_extract(cyto_name, "[^_]+")) %>%
+  # Editing cytokine names
+  mutate(cyto_name = gsub('\\.', '-', cyto_name)) %>% 
+  # Sort rows
+  group_by(cyto_name) %>% 
+  arrange(order_type, .by_group = TRUE) %>% 
+  # Reorder columns
+  select(cyto_name, sample_type, logBCEP, logBCIPP, logBDCPP, logDPP, logbde47, logbde99, logbde100, logbde153, -order_type)
+# SUPPLEMENTAL TABLE 6
+utils::write.csv(table_weights_only, "Supplemental Table 6 qgcompweights only.csv")
+
+# OPFRS/PBDEs mix table
+table_weights_mix <- full_model_w_mix %>% 
+  # Ordering sample types (maternal -> placenta -> cord) %>% 
+  mutate(order_type = case_when(grepl("_m", cyto_name) ~ 1,
+                                grepl("_p", cyto_name) ~ 2,
+                                grepl("_c", cyto_name) ~ 3,
+                                .default = NA),
+         sample_type = case_when(grepl("_m", cyto_name) ~ "Maternal",
+                                grepl("_p", cyto_name) ~ "Placenta",
+                                grepl("_c", cyto_name) ~ "Cord",
+                                .default = NA),
+         cyto_name = str_extract(cyto_name, "[^_]+")) %>%
+  # Editing cytokine names
+  mutate(cyto_name = gsub('\\.', '-', cyto_name)) %>% 
+  # Sort rows
+  group_by(cyto_name) %>% 
+  arrange(order_type, .by_group = TRUE) %>% 
+  # Reorder columns
+  select(cyto_name, sample_type, logBCEP, logBCIPP, logBDCPP, logDPP, logbde47, logbde99, logbde100, logbde153, -order_type)
+# SUPPLEMENTAL TABLE 7
+table_weights_mix
+#utils::write.csv(table_weights_mix, "Supplemental Table 7 qgcompweights mix.csv")
+```
+
+
+## Table S8. PCA
+```{r regression pca, include=FALSE}
+
+
+lm.regression.m3.pca <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(OPFR = character(0), PCA = character(0), Estimate = character(0))
+
+    # Loop over Cytokine variables
+  for (pca_name in pca_names) {
+    # Loop over OPFR variables
+    for (opfr_name in opfr_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste(pca_name, "~ log(", opfr_name, ") + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model <- lm(formula, data = data)
+
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta <- round(coef(model)[2], 2)
+      conf_intervals <- confint(model)
+      conf_low <- round(conf_intervals[2, 1], 2)
+      conf_high <- round(conf_intervals[2, 2], 2)
+      result <- data.frame(
+        OPFR = opfr_name,
+        PCA = pca_name,
+        Estimate = paste0(coef.beta, " (", conf_low, ", ", conf_high, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+
+## Model 3
+results_m3_opfr_pca <- lm.regression.m3.pca(data_complete)
+results_m3_opfr_pca <- results_m3_opfr_pca %>% 
+ pivot_wider(names_from = PCA,
+             values_from = Estimate)
+results_m3_opfr_pca
+#utils::write.csv(results_m3, "m3_pca.csv")
+```
+
+```{r regression pca, include=FALSE}
+
+
+lm.regression.m3.pca <- function(data) {
+  # Create empty dataframe for results
+  results <- data.frame(PBDE = character(0), PCA = character(0), Estimate = character(0))
+
+    # Loop over Cytokine variables
+  for (pca_name in pca_names) {
+    # Loop over pbde variables
+    for (pbde_name in pbde_names) {
+      # Create a formula for the linear model
+      formula <- as.formula(paste(pca_name, "~ log(", pbde_name, ") + gest.age.procedure + as.numeric(mat_age) + as.factor(mat_educ) + as.factor(insurance) + bmi.procedure"))
+      # Fit the linear model
+      model <- lm(formula, data = data)
+
+      # Get n, beta and its confidence interval
+      n<-nobs(model)
+      coef.beta <- round(coef(model)[2], 2)
+      conf_intervals <- confint(model)
+      conf_low <- round(conf_intervals[2, 1], 2)
+      conf_high <- round(conf_intervals[2, 2], 2)
+      result <- data.frame(
+        PBDE = pbde_name,
+        PCA = pca_name,
+        Estimate = paste0(coef.beta, " (", conf_low, ", ", conf_high, ")"),
+        N=n
+      )
+      results <- bind_rows(results, result)
+    }
+  }
+  return(results)
+}
+
+## Model 3
+results_m3_pbde_pca <- lm.regression.m3.pca(data_complete)
+results_m3_pbde_pca <- results_m3_pbde_pca %>% 
+ pivot_wider(names_from = PCA,
+             values_from = Estimate)
+results_m3_pbde_pca
+#utils::write.csv(results_m3, "m3_pca.csv")
+```
