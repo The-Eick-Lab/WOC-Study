@@ -13,4 +13,4 @@ PMID:
 **Results**: A one-quartile increase in the mixture of PBDEs alone was positively associated with most maternal inflammatory mediators, including CCL-17 (Ѱ=0.22, 95% CI=0.03, 0.42) and CCL-2 (Ѱ=0.21, 95% CI=0.06, 0.37). Additionally, a one-quartile increase in the combined mixture of PBDEs and OPFRs was associated with increases in maternal serum levels of CCL-2, CCL-3, CC-17, and CCL-22.  In contrast, BDE-47 and BDE-100 were individually associated with reductions in placental CCL-2 (β=-0.57, 95% CI=-1.06, -0.0; β=-0.44, 95% CI= -0.82, -0.06, respectively). No significant associations between levels of FRs in cord blood and cytokines were observed. 
 
 
-**Conclusions**: Prenatal exposure to FRs, particularly PBDEs, was significantly associated with differences in biomarkers of inflammation in maternal serum during mid-pregnancy. <img width="468" height="37" alt="image" src="https://github.com/user-attachments/assets/cb6c87c7-b96a-4995-8337-cd4a2cf3e96b" />
+**Conclusions**: Prenatal exposure to FRs, particularly PBDEs, was significantly associated with differences in biomarkers of inflammation in maternal serum during mid-pregnancy
