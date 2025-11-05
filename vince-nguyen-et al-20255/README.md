@@ -1,6 +1,6 @@
 ## *Associations between brominated and organophosphate flame retardant levels and inflammatory biomarkers in maternal blood, cord blood, and placental tissue at mid-gestation*
 
-[DOI]  10.1016/j.scitotenv.2025.180501
+[DOI](10.1016/j.scitotenv.2025.180501)
 
 PMID: 40961615
 
