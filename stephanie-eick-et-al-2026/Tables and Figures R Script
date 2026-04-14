@@ -1,0 +1,1594 @@
+---
+title: Code Tables & Figures 
+author:
+date:
+output:
+  html_document:
+   theme: simplex
+   code_folding: hide
+   toc: true
+   toc_depth: 5
+   toc_float: true
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{css, echo=FALSE}
+pre {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+pre[class] {
+  max-height: 500px;
+}
+
+.scroll-500 {
+  max-height: 500px;
+  overflow-y: auto;
+  background-color: inherit;
+}
+
+h3 {
+   text-align: center;
+}
+```
+
+## Set up 
+
+#### Load packages
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+## load packages
+library(gridExtra)
+library(tidyverse)
+library(gtsummary)
+library(flextable)
+library(dplyr)
+library(broom)
+library(haven)
+library(MatchIt)
+library(flextable)
+library(cowplot)
+library(extrafont)
+library(gt)
+library(stringr)
+library(gtExtras)
+library(ggpubr)
+```
+
+#### Set plot themes
+```{r class.output="scroll-500", warning = FALSE, message = FALSE, fig.width = 15, fig.height =20}
+#### build labels
+stress_label <- c("1-3 SLEs", "≥ 4 SLEs")
+names(stress_label) <- c("stress_1_31", "stress_41")
+
+cytokines_label <- c("IL-10", "IL-6", 
+                     expression("TFN-" * alpha), 
+                     expression("IFN-" * gamma))
+names(cytokines_label) <- c("`IL-10_log`", "`IL-6_log`", 
+                            "`TNF-Alpha_log`", "`IFN-Gamma_log`")
+
+
+cytokines_label_table <- c("IL-10", "IL-6", "TNF-Alpha", "IFN-Gamma")
+names(cytokines_label_table) <- c("`IL-10_log`", "`IL-6_log`", 
+                            "`TNF-Alpha_log`", "`IFN-Gamma_log`")
+
+
+cytokines_full_label <- c(
+  "IL-7", 
+  expression("IFN-" * gamma),
+  expression("IFN-" * alpha),
+  expression("TNF-" * alpha),
+  "TNF-R1",
+  "IL-12",
+  expression("IL-1" * beta),
+  "IL-2",
+  "IL-4",
+  "IL-10",
+  "IL-6",
+  "IL-8",
+  "CXCCL-10",
+  "CC-22",
+  "CCL-2",
+  "CCL-3",
+  "CCL-4",
+  "CXCL-9",
+  "CCL- 17",
+  expression("IL-28" * alpha)
+)
+
+names(cytokines_full_label) <- c(
+  "`IL-7_log`",
+  "`IFN-Gamma_log`", 
+  "`IFN-Alpha_log`",
+  "`TNF-Alpha_log`", 
+  "`TNF-RI_log`",
+  "`IL-12_log`",
+  "`IL-1Beta_log`",
+  "`IL-2_log`",
+  "`IL-4_log`",
+  "`IL-10_log`", 
+  "`IL-6_log`",
+  "`IL-8_log`",
+  "CXCL10_log", 
+  "CCL22_log", 
+  "CCL2_log", 
+  "CCL3_log", 
+  "CCL4_log", 
+  "CXCL9_log",  
+  "CCL17_log", 
+  "`IL-28A_log`"
+)
+
+
+# set global theme for stratified plots
+theme_set(theme_bw() +
+  theme(title = element_text(size = 15, color = "grey30"),
+        axis.title.x = element_text(size = 15, color = "grey30"),
+        axis.title.y = element_text(size = 15, color = "grey30"),
+        axis.text.x = element_text(size =15, color = "grey30"),
+        axis.text.y = element_text(size = 15, color = "grey30"),
+        panel.grid = element_blank(),
+        strip.text = element_text(size = 15, color = "grey30"),
+        strip.background = element_blank(), 
+        legend.title = element_blank(),
+        legend.position = "none",
+        legend.text = element_text(size = 15, color = "grey30"))) 
+
+```
+
+
+
+
+
+## Descriptive statistics 
+
+#### Figure S1
+
+Illustration of the area of common support with propensity scores for individuals in both cohorts.
+
+Note: The propensity scores for those in the Atlanta Maternal Child Cohort (ATL) are represented in blue, while the propensity scores for those in the Women’s Option Center (WOC) are in red. The leftmost dashed line indicates where the minimum propensity score for those who were in the WOC occurs, and the rightmost dashed line indicates where the maximum propensity score for those who were in ATL. The area of common support is the area within these two dashed lines, where individuals within both cohorts had similar propensity scores.
+
+```{r class.output="scroll-500", message = FALSE, fig.width=20, fig.height = 15}
+# create categorical age and bmi 
+pooled <- pooled %>% 
+  mutate(mat_bmi_cat = case_when(
+    mat_bmi < 25 ~ "0", 
+    mat_bmi >= 25 & mat_bmi < 30 ~ "1", 
+    mat_bmi >= 30 ~ "2")) %>%
+  mutate(mat_age_cat = case_when(
+   mat_age < 20 ~ "0",
+   mat_age >= 20 & mat_age < 25 ~ "1",
+   mat_age >= 25 & mat_age < 30 ~ "2",
+   mat_age >= 30 ~ "3"))
+
+# correct data types
+pooled$mat_bmi_cat <- as.factor(pooled$mat_bmi_cat)
+pooled$mat_age_cat <- as.factor(pooled$mat_age_cat)
+pooled$cohort <- as.factor(pooled$cohort)
+
+# run regression
+prop <- glm(cohort ~ marital + mat_educ + parity + mat_bmi_cat + mat_age_cat + smoke, data=pooled, family="binomial")
+
+summary(prop)
+
+# calculate propensity scores
+pooled_p <- pooled %>% drop_na(marital, mat_educ, parity, mat_bmi_cat, mat_age_cat, smoke)
+pooled_p$p <- predict(prop, type="response")
+
+
+ ggplot(pooled_p, aes(x=p, fill=factor(cohort))) + 
+   geom_histogram(alpha=0.75, position="identity")  +
+   scale_fill_manual(values=c("#b2182b", "#2166ac"), labels=c("ATL","WOC"), name=NULL) + 
+  geom_vline(xintercept=min(pooled_p$p[pooled_p$cohort==1]), linetype=2) + geom_vline(xintercept=max(pooled_p$p[pooled_p$cohort==0]), linetype=2) +
+  labs(x="Estimated Propensity Score", y="Density") +
+   theme(legend.position = "bottom",  text = element_text(family = "Optima", size=25),
+         axis.title.x = element_text(size = 25, color = "grey10"),
+        axis.title.y = element_text(size = 25, color = "grey10"),
+         axis.text.x = element_text(size = 25, color = "grey10"),
+        axis.text.y = element_text(size = 25, color = "grey10"))
+ 
+ # next, nearest neighbor without replace matching
+set.seed(142)
+pooled_m <- pooled_p %>%
+  filter(p >= min(p[pooled_p$cohort == 1]) & p <= max(p[pooled_p$cohort == 0]))
+m.out <- matchit(cohort ~ marital + mat_educ + smoke + parity + mat_bmi_cat + mat_age_cat, data=pooled_p, method = "nearest")
+summary(m.out)
+matched <- match_data(m.out)
+
+
+# create weights: for ATL, this is 1/1-propensity score, for WOC, this is 1/propensity score
+matched$ps_weight<-ifelse(matched$cohort==1, 1/matched$p,
+                       ifelse(matched$cohort==0, 1/(1-matched$p),NA))
+
+# restrict datasets to only matching ids
+atl_m <- inner_join(atl, matched)
+woc_mat_m <- inner_join(woc_mat, matched)
+
+```
+
+#### Table 1 
+
+Distribution of demographics and experiences of stressful life events in the San Francisco Women’s Option Center (WOC) and Atlanta Maternal-Child Cohort (ATL). 
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+# recode
+woc_t_full <- woc_mat_full %>%
+mutate(marital = recode(marital,
+                       "0" = "Single",
+                       "1" = "Married or living with partner"),
+       parity = recode(parity,
+                       "0" = "No prior births",
+                       "1" = "1 or more prior births"),
+       smoke = recode(smoke,
+                      "0" = "No",
+                       "1" = "Yes"),
+       mat_educ = recode(mat_educ,
+                        "0" = "< College degree",
+                        "1" = "≥ College degree"),
+       mat_race_eth = recode(mat_race_eth,
+                       "0" = "Other",
+                       "1" = "White",
+                       "2" = "Black",
+                       "3" = "Latina"),
+       stress_1_3 = recode(stress_1_3,
+                        "0" = "No",
+                         "1" = "Yes"),
+       stress_4 = recode(stress_4,
+                         "0" = "No",
+                         "1" = "Yes"))
+
+woc_t_full <- woc_t_full %>% rename("Maternal age" = mat_age,
+                      "Marital status" = marital,
+                      "Maternal education" = mat_educ,
+                      "Early pregnancy BMI" = mat_bmi,
+                      "Maternal race/ethnicity" = mat_race_eth,
+                      "Parity" = parity,
+                      "Smoke" = smoke,
+                      "Gestational age" = gest_age,
+                      "Argued with partner" = argued_with_partner, 
+                      "Bills couldn't pay" = bills_couldnt_pay,
+                      "Drug/drinks problem (someone close)" = drug_drinks_someoneclose,
+                      "Partner legal problems" = partner_legal_problems,
+                      "Moved" = moved,
+                      "Lost job" = lost_job,
+                      "Passed away (someone close)" = passed_away_someoneclose,
+                      "Partner lost job" = partner_lost_job,
+                      "Separated or divorced" = separated_divorced,
+                      "Very sick (someone close)" = very_sick_someoneclose,
+                      "1-3 stressors" = stress_1_3,
+                       "4 + stressors" = stress_4)
+### table
+table1_woc_full <- woc_t_full %>% dplyr::select(`Maternal age`,`Early pregnancy BMI`, `Maternal education`, `Marital status`, `Maternal race/ethnicity`, Parity, Smoke, `1-3 stressors`, `4 + stressors`)
+
+table1_woc_full <-  tbl_summary(table1_woc_full, type = all_dichotomous() ~ "categorical", statistic = all_continuous() ~ "{mean} ({sd})", missing_text = "Missing") %>%
+  modify_header(label = "**Demographic**")  %>%
+  bold_labels()
+```
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+# recode
+atl_t_full <- atl_full %>%
+ mutate(marital = recode(marital,
+                       "0" = "Married or living with partner",
+                       "1" = "Single"),
+       parity = recode(parity,
+                       "0" = "No prior births",
+                       "1" = "1 or more prior births"),
+       smoke = recode(smoke,
+                      "0" = "No",
+                       "1" = "Yes"),
+       mat_educ = recode(mat_educ,
+                        "0" = "< College degree",
+                        "1" = "≥ College degree"),
+       stress_1_3 = recode(stress_1_3,
+                        "0" = "No",
+                         "1" = "Yes"),
+       stress_4 = recode(stress_4,
+                         "0" = "No",
+                         "1" = "Yes"),
+       prec = recode(prec,
+                     "0" = "No",
+                     "1" = "Yes"),
+       ghyp = recode(ghyp,
+                     "0" = "No",
+                     "1" = "Yes"),
+       any_hyper = recode(any_hyper,
+                      "0" = "No",
+                      "1" = "Yes"))
+
+atl_t_full <- atl_t_full %>% rename("Maternal age" = mat_age,
+                      "Marital status" = marital,
+                      "Maternal education" = mat_educ,
+                      "Early pregnancy BMI" = mat_bmi,
+                      "Parity" = parity,
+                      "Smoke" = smoke,
+                      "Gestational age" = gest_age,
+                      "Argued with partner" = argued_with_partner, 
+                      "Bills couldn't pay" = bills_couldnt_pay,
+                      "Drug/drinks problem (someone close)" = drug_drinks_someoneclose,
+                      "Partner legal problems" = partner_legal_problems,
+                      "Moved" = moved,
+                      "Lost job" = lost_job,
+                      "Passed away (someone close)" = passed_away_someoneclose,
+                      "Partner lost job" = partner_lost_job,
+                      "Separated or divorced" = separated_divorced,
+                      "Very sick (someone close)" = very_sick_someoneclose,
+                      "1-3 stressors" = stress_1_3,
+                       "4 + stressors" = stress_4,
+                      "Preeclambsia" = prec,
+                      "Gestational hypertension" = ghyp,
+                      "Hypertensive disorder" = any_hyper)
+
+# rable
+table1_atl_full <- atl_t_full %>% dplyr::select(`Maternal age`,`Early pregnancy BMI`, `Maternal education`, `Marital status`, Parity, Smoke, `1-3 stressors`, `4 + stressors`, Preeclambsia, `Gestational hypertension`, `Hypertensive disorder`)
+
+table1_atl_full <- tbl_summary(table1_atl_full, type = all_dichotomous() ~ "categorical", statistic = all_continuous() ~ "{mean} ({sd})", missing_text = "Missing") %>% 
+  modify_header(label = "**Demographic**")  %>%
+  bold_labels()
+
+# merge summary tables
+table1_full <- tbl_merge(tbls = list(table1_woc_full, table1_atl_full),
+          tab_spanner = c("WOC", "ATL")) 
+
+table1_full
+```
+
+#### Table S1
+Table S1: Distribution of individual stressful life events (SLEs) across SLE categories in the San Francisco Women’s Option Center (WOC-SF, 2010-2016) and Atlanta African American Maternal-Child Cohort (ATL, 2015-2019), not matched on propensity scores.  
+
+```{r}
+
+stress_columns <- c(
+  "argued_with_partner",
+  "bills_couldnt_pay",
+  "drug_drinks_someoneclose",
+  "partner_legal_problems",
+  "moved",
+  "lost_job",
+  "passed_away_someoneclose",
+  "partner_lost_job",
+  "separated_divorced",
+  "very_sick_someoneclose"
+)
+
+cross_table <- function (df, stressor) {
+  df %>%
+  filter({{stressor}} == "1") %>%
+  mutate(across(all_of(stress_columns), ~ as.numeric(as.character(.)))) %>%
+  mutate(stress_total = rowSums(select(., all_of(stress_columns)), na.rm = TRUE),
+         stress_group = case_when(
+           stress_total <= 3 ~ "1-3 SLEs",
+           stress_total > 3 ~ "≥ 4 SLEs")) %>%
+  group_by(stress_group) %>%
+  summarise(count = n()) %>%
+  mutate(sle = as_label(enquo(stressor)))
+}
+
+table_s1_woc <- map_dfr(stress_columns, ~cross_table(df = woc_mat_full, stressor = !!sym(.x))) %>%
+  mutate(df = "WOC-SF")
+table_s1_atl <- map_dfr(stress_columns, ~cross_table(df = atl_full, stressor = !!sym(.x)))%>%
+  mutate(df = "ATL")
+
+bind_rows(table_s1_woc, table_s1_atl) %>%
+  pivot_wider(names_from = stress_group, values_from = count) %>%
+  gt(groupname_col = "sle", rowname_col = "df") %>%
+  cols_label()
+```
+
+#### Table S2 
+
+Distribution of demographics and experiences of stressful life events in the San Francisco Women’s Option Center (WOC), Atlanta Maternal-Child Cohort (ATL), and pooled cohort matched on propensity scores.
+ 
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+# recode
+woc_t_mat <- woc_mat_m %>%
+mutate(marital = recode(marital,
+                       "0" = "Single",
+                       "1" = "Married or living with partner"),
+       parity = recode(parity,
+                       "0" = "No prior births",
+                       "1" = "1 or more prior births"),
+       smoke = recode(smoke,
+                      "0" = "No",
+                       "1" = "Yes"),
+       mat_educ = recode(mat_educ,
+                        "0" = "< College degree",
+                        "1" = "≥ College degree"),
+       mat_race_eth = recode(mat_race_eth,
+                       "0" = "Other",
+                       "1" = "White",
+                       "2" = "Black",
+                       "3" = "Latina"),
+       stress_1_3 = recode(stress_1_3,
+                        "0" = "No",
+                         "1" = "Yes"),
+       stress_4 = recode(stress_4,
+                         "0" = "No",
+                         "1" = "Yes"))
+
+woc_t_mat <- woc_t_mat %>% rename("Maternal age" = mat_age,
+                      "Marital status" = marital,
+                      "Maternal education" = mat_educ,
+                      "Early pregnancy BMI" = mat_bmi,
+                      "Maternal race/ethnicity" = mat_race_eth,
+                      "Parity" = parity,
+                      "Smoke" = smoke,
+                      "Gestational age" = gest_age,
+                      "Argued with partner" = argued_with_partner, 
+                      "Bills couldn't pay" = bills_couldnt_pay,
+                      "Drug/drinks problem (someone close)" = drug_drinks_someoneclose,
+                      "Partner legal problems" = partner_legal_problems,
+                      "Moved" = moved,
+                      "Lost job" = lost_job,
+                      "Passed away (someone close)" = passed_away_someoneclose,
+                      "Partner lost job" = partner_lost_job,
+                      "Separated or divorced" = separated_divorced,
+                      "Very sick (someone close)" = very_sick_someoneclose,
+                      "1-3 stressors" = stress_1_3,
+                       "4 + stressors" = stress_4)
+### table
+tables1_woc_mat <- woc_t_mat %>% dplyr::select(`Maternal age`,`Early pregnancy BMI`, `Maternal education`, `Marital status`, `Maternal race/ethnicity`, Parity, Smoke, `1-3 stressors`, `4 + stressors`)
+
+tables1_woc_mat <-  tbl_summary(tables1_woc_mat, type = all_dichotomous() ~ "categorical", statistic = all_continuous() ~ "{mean} ({sd})", missing_text = "Missing") %>%
+   modify_header(label = "**Demographic**")  %>%
+   bold_labels()
+
+
+```
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+# recode
+atl_t_mat <- atl_m %>%
+ mutate(marital = recode(marital,
+                       "0" = "Married or living with partner",
+                       "1" = "Single"),
+       parity = recode(parity,
+                       "0" = "No prior births",
+                       "1" = "1 or more prior births"),
+       smoke = recode(smoke,
+                      "0" = "No",
+                       "1" = "Yes"),
+       mat_educ = recode(mat_educ,
+                        "0" = "< College degree",
+                        "1" = "≥ College degree"),
+       stress_1_3 = recode(stress_1_3,
+                        "0" = "No",
+                         "1" = "Yes"),
+       stress_4 = recode(stress_4,
+                         "0" = "No",
+                         "1" = "Yes"))
+
+atl_t_mat <- atl_t_mat %>% rename("Maternal age" = mat_age,
+                      "Marital status" = marital,
+                      "Maternal education" = mat_educ,
+                      "Early pregnancy BMI" = mat_bmi,
+                      "Parity" = parity,
+                      "Smoke" = smoke,
+                      "Gestational age" = gest_age,
+                      "Argued with partner" = argued_with_partner, 
+                      "Bills couldn't pay" = bills_couldnt_pay,
+                      "Drug/drinks problem (someone close)" = drug_drinks_someoneclose,
+                      "Partner legal problems" = partner_legal_problems,
+                      "Moved" = moved,
+                      "Lost job" = lost_job,
+                      "Passed away (someone close)" = passed_away_someoneclose,
+                      "Partner lost job" = partner_lost_job,
+                      "Separated or divorced" = separated_divorced,
+                      "Very sick (someone close)" = very_sick_someoneclose,
+                      "1-3 stressors" = stress_1_3,
+                       "4 + stressors" = stress_4)
+
+# rable
+tables1_atl_mat <- atl_t_mat %>% dplyr::select(`Maternal age`,`Early pregnancy BMI`, `Maternal education`, `Marital status`, Parity, Smoke, `1-3 stressors`, `4 + stressors`)
+
+tables1_atl_mat <- tbl_summary(tables1_atl_mat, type = all_dichotomous() ~ "categorical", statistic = all_continuous() ~ "{mean} ({sd})", missing_text = "Missing") %>%
+   modify_header(label = "**Demographic**")  %>%
+   bold_labels()
+```
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+# recode
+mat_t <- matched %>%
+mutate(marital = recode(marital,
+                       "0" = "Single",
+                       "1" = "Married or living with partner"),
+       parity = recode(parity,
+                       "0" = "No prior births",
+                       "1" = "1 or more prior births"),
+       smoke = recode(smoke,
+                      "0" = "No",
+                       "1" = "Yes"),
+       mat_educ = recode(mat_educ,
+                        "0" = "< College degree",
+                        "1" = "≥ College degree"),
+       mat_race_eth = recode(mat_race_eth,
+                       "0" = "Other",
+                       "1" = "White",
+                       "2" = "Black",
+                       "3" = "Latina"),
+       stress_1_3 = recode(stress_1_3,
+                        "0" = "No",
+                         "1" = "Yes"),
+       stress_4 = recode(stress_4,
+                         "0" = "No",
+                         "1" = "Yes"))
+
+
+
+mat_t <- mat_t %>% rename("Maternal age" = mat_age,
+                      "Marital status" = marital,
+                      "Maternal education" = mat_educ,
+                      "Early pregnancy BMI" = mat_bmi,
+                      "Maternal race/ethnicity" = mat_race_eth,
+                      "Parity" = parity,
+                      "Smoke" = smoke,
+                      "Gestational age" = gest_age,
+                      "Social support" = soc_supp,
+                      "1-3 stressors" = stress_1_3,
+                       "4 + stressors" = stress_4)
+
+# table
+tables1_pooled <- mat_t %>% dplyr::select(`Maternal age`,`Early pregnancy BMI`, `Maternal education`, `Marital status`,`Maternal race/ethnicity`, Parity, Smoke, `1-3 stressors`, `4 + stressors`)
+
+tables1_pooled <- tbl_summary(tables1_pooled, type = all_dichotomous() ~ "categorical", statistic = all_continuous() ~ "{mean} ({sd})", missing_text = "Missing") %>%
+   modify_header(label = "**Demographic**")  %>%
+   bold_labels()
+
+# merge summary tables
+tables1 <- tbl_merge(tbls = list(tables1_woc_mat, tables1_atl_mat, tables1_pooled),
+          tab_spanner = c("WOC", "ATL", "Pooled")) 
+
+tables1
+```
+
+#### Table 2
+
+Distribution of maternal cytokines (pg/mL) in the San Francisco Women’s Option Center (WOC) and Atlanta Maternal-Child Cohort (ATL) and distribution of maternal cytokines (pg/mL) in the San Francisco Women’s Option Center (WOC), Atlanta Maternal-Child Cohort (ATL), and pooled cohort matched on propensity scores.
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+
+# subset datasets for table
+
+# full 
+table2_woc_full <- woc_mat_full %>% dplyr::select(`IL-6`,`IL-10`, `IFN-Gamma`, `TNF-Alpha`) 
+
+table2_atl_full <- atl_full %>% dplyr::select(`IL-6`,`IL-10`, `IFN-Gamma`, `TNF-Alpha`) 
+
+# matched 
+table2_woc_mat <- woc_mat_m %>% dplyr::select(`IL-6`,`IL-10`, `IFN-Gamma`, `TNF-Alpha`) 
+
+table2_atl_mat <- atl_m %>% dplyr::select(`IL-6`,`IL-10`, `IFN-Gamma`, `TNF-Alpha`) 
+
+table2_pool_mat <- matched %>% dplyr::select(`IL-6`,`IL-10`, `IFN-Gamma`, `TNF-Alpha`) 
+
+# build function to calculate summary measures: geometric mean, geometric sd, min, med, max
+dist.func <- function(x) {
+  c(
+    geomean = round(exp(mean(log(x), na.rm = TRUE)), 2),
+    geosd = round(exp(sd(log(x), na.rm = TRUE)), 2),
+    min = round(min(x, na.rm = TRUE), 2),
+    med = round(median(x, na.rm = TRUE), 2),
+    max = round(max(x, na.rm = TRUE), 2)
+  )
+}
+
+# apply to each cohort
+
+# full 
+table2_woc_full <- as.data.frame(do.call(rbind, lapply(table2_woc_full, dist.func)))
+table2_woc_full <- table2_woc_full %>% 
+  mutate(cohort = "WOC",
+         dataset = "Full") %>%
+  mutate(cytokine = rownames(table2_woc_full))
+
+table2_atl_full <- as.data.frame(do.call(rbind, lapply(table2_atl_full, dist.func)))
+table2_atl_full <- table2_atl_full %>% 
+  mutate(cohort = "ATL",
+         dataset = "Full") %>%
+  mutate(cytokine = rownames(table2_atl_full))
+
+# matched
+table2_woc_mat <- as.data.frame(do.call(rbind, lapply(table2_woc_mat, dist.func)))
+table2_woc_mat <- table2_woc_mat %>% 
+  mutate(cohort = "WOC",
+         dataset = "Matched") %>%
+  mutate(cytokine = rownames(table2_woc_mat))
+
+table2_atl_mat <- as.data.frame(do.call(rbind, lapply(table2_atl_mat, dist.func)))
+table2_atl_mat <- table2_atl_mat %>% 
+  mutate(cohort = "ATL",
+         dataset = "Matched") %>%
+  mutate(cytokine = rownames(table2_atl_mat))
+
+table2_pool_mat <- as.data.frame(do.call(rbind, lapply(table2_pool_mat, dist.func)))
+table2_pool_mat <- table2_pool_mat %>% 
+  mutate(cohort = "POOL",
+         dataset = "Matched") %>%
+  mutate(cytokine = rownames(table2_pool_mat))
+
+
+table_2 <- bind_rows(table2_woc_full, table2_atl_full, table2_woc_mat, table2_atl_mat, table2_pool_mat)
+
+# Table
+table_2 %>% 
+  mutate(
+    Cohort = factor(cohort, levels = c("WOC", "ATL", "POOL")), 
+    `Geometric Mean (SD)` = paste0(geomean, " (", geosd, ")")
+  ) %>%
+  select(cytokine, Cohort, dataset, `Geometric Mean (SD)`, min, med, max) %>%
+  arrange(cytokine, Cohort, dataset, `Geometric Mean (SD)`, min, med, max) %>%
+  gt(groupname_col = 'cytokine', rowname_col = 'Cohort') %>%
+  cols_label(
+    min = "Minimum",
+    med = "Median",
+    max= "Maximum",
+    dataset = "Cohort") %>%
+    opt_align_table_header(align = "left") %>%
+  gt_theme_538() 
+
+
+
+```
+
+#### Table S3 
+
+Distribution of cytokines in maternal blood, cord blood, and placenta (pg/mL) in the San Francisco Women’s Option Center (WOC).
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+
+# subset datasets for table
+tables2_woc_mat <- woc_mat_full %>% dplyr::select(`IL-28A`, `IL-6`, `IL-8`, `IL-7`, CXCL10, `IL-10`, CCL2, `IFN-Gamma`, CCL3, CCL22, CCL4, `IL-4`, CXCL9, `IFN-Alpha`, `TNF-Alpha`, `TNF-RI`, CCL17, `IL-1Beta`)
+
+tables2_woc_cord <- woc_cord %>% dplyr::select(`IL-28A`, `IL-6`, `IL-8`, `IL-7`, `CXCL10`, `IL-10`, `CCL22`, `IFN-Gamma`, `CCL3`, `CCL4`, `IL-4`, `IL-2`, `CXCL9`, `IFN-Alpha`, `TNF-Alpha`, `TNF-RI`, `IL-12`, `CCL17`, `IL-1Beta`) 
+
+tables2_woc_plac <- woc_plac %>% dplyr::select(`IL-28A`, `IL-6`, `IL-8`, `CXCL10`, `IL-10`, `CCL2`, `CCL3`, `CCL22`, `CCL4`, `IL-4`, `IL-2`,`IFN-Alpha`, `TNF-Alpha`, `TNF-RI`, `IL-12`, `IL-1Beta`) 
+
+# apply to each cohort
+tables2_woc_plac <- as.data.frame(do.call(rbind, lapply(tables2_woc_plac, dist.func)))
+tables2_woc_plac <- tables2_woc_plac %>% 
+  mutate(Cohort = "WOC", matrix = "Placental")%>%
+  mutate(cytokine = rownames(tables2_woc_plac))
+
+tables2_woc_mat <- as.data.frame(do.call(rbind, lapply(tables2_woc_mat, dist.func)))
+tables2_woc_mat <- tables2_woc_mat %>% 
+  mutate(Cohort = "WOC", matrix = "Maternal")%>%
+  mutate(cytokine = rownames(tables2_woc_mat))
+
+tables2_woc_cord <- as.data.frame(do.call(rbind, lapply(tables2_woc_cord, dist.func)))
+tables2_woc_cord <- tables2_woc_cord %>% 
+  mutate(Cohort = "WOC", matrix = "Cord")%>%
+  mutate(cytokine = rownames(tables2_woc_cord))
+
+table_s2 <- rbind(tables2_woc_cord, tables2_woc_mat,tables2_woc_plac)
+
+# table
+table_s2 %>% 
+  mutate(
+    `Geometric Mean (SD)` = paste0(geomean, " (", geosd, ")")  
+  ) %>%
+  dplyr::select(cytokine, Cohort, matrix, cytokine, `Geometric Mean (SD)`, min, med, max) %>%
+  arrange(cytokine,Cohort, matrix, `Geometric Mean (SD)`, min, med, max) %>%
+  gt(groupname_col = 'cytokine', rowname_col = 'Cohort') %>%
+  cols_label(
+    min = "Minimum",
+    med = "Median",
+    max= "Maximum",
+    matrix = "Matrix") %>%
+   opt_align_table_header(align = "left") %>%
+  gt_theme_538() 
+```
+
+## Analysis 
+
+#### Figure 1 {.tabset}
+
+```{r class.output="scroll-500", message = FALSE}
+### WOC maternal 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- lm(formula = formula, weights = ps_weight, data = woc_mat_m)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_woc_fig1 <- do.call(rbind, models) 
+
+# format output
+reg_woc_fig1 <- reg_woc_fig1 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, N, term, estimate, conf.low, conf.high) %>%
+# create pro/anti/both/chemokine column
+  mutate(type = case_when(
+    outcome %in% c("`IFN-Gamma_log`", "`TNF-Alpha_log`") ~ "Pro-inflammatory",
+    outcome %in% c("`IL-10_log`") ~ "Anti-inflammatory",
+    outcome %in% c("`IL-6_log`") ~ "Both")) %>%
+  mutate(cohort = "WOC")
+
+# Order
+reg_woc_fig1$term <- factor(reg_woc_fig1$term, levels = c("stress_1_31", "stress_41"))
+reg_woc_fig1$outcome <- factor(reg_woc_fig1$outcome, levels = c("`TNF-Alpha_log`", "`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`"))
+```
+
+```{r class.output="scroll-500",  message = FALSE}
+### ATL 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- lm(formula = formula, weights = ps_weight, data = atl_m)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_atl_fig1 <- do.call(rbind, models) 
+
+# format output
+reg_atl_fig1 <- reg_atl_fig1 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, N, term, estimate, conf.low, conf.high) %>%
+# create pro/anti/both/chemokine column
+  mutate(type = case_when(
+    outcome %in% c("`IFN-Gamma_log`", "`TNF-Alpha_log`") ~ "Pro-inflammatory",
+    outcome %in% c("`IL-10_log`") ~ "Anti-inflammatory",
+    outcome %in% c("`IL-6_log`") ~ "Both")) %>%
+  mutate(cohort = "ATL")
+
+# order
+reg_atl_fig1$term <- factor(reg_atl_fig1$term, levels = c("stress_1_31", "stress_41"))
+reg_atl_fig1$outcome <- factor(reg_atl_fig1$outcome, levels = c("`TNF-Alpha_log`", "`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`"))
+
+```
+
+```{r class.output="scroll-500", message = FALSE}
+### matched 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_log`", "`IL-6_log`","`TNF-Alpha_log`", "`IL-10_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- lm(formula = formula, weights = ps_weight, data = matched)
+    n  <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_pooled_fig1 <- do.call(rbind, models) 
+
+# format output 
+reg_pooled_fig1 <- reg_pooled_fig1 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, N, term, estimate, conf.low, conf.high) %>%
+# create pro/anti/both/chemokine column
+  mutate(type = case_when(
+    outcome %in% c("`IFN-Gamma_log`", "`TNF-Alpha_log`") ~ "Pro-inflammatory",
+    outcome %in% c("`IL-10_log`") ~ "Anti-inflammatory",
+    outcome %in% c("`IL-6_log`") ~ "Both")) %>%
+  mutate(cohort = "Pooled")
+
+# order
+reg_pooled_fig1$term <- factor(reg_pooled_fig1$term, levels = c("stress_1_31", "stress_41"))
+reg_pooled_fig1$outcome <- factor(reg_pooled_fig1$outcome, levels = c("`TNF-Alpha_log`", "`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`"))
+```
+
+#####  Figure 1
+
+Associations between experiences of stressful life events (1-3 and >4 compared to 0) and natural log transformed maternal cytokines (pg/mL) in the San Francisco Women’s Option Center (WOC), Atlanta Maternal-Child Cohort (ATL), and pooled cohort matched on propensity scores, estimated using linear regression.Note: Models are adjusted for maternal age, maternal education, maternal BMI, parity, smoke, and gestational age at visit
+
+```{r class.output="scroll-500", message = FALSE, fig.width=7, fig.height = 7}
+
+# bind regression results
+fig_1 <- rbind(reg_atl_fig1, reg_woc_fig1, reg_pooled_fig1)
+fig_1$cohort <- factor(fig_1$cohort, levels  = c("ATL", "WOC", "Pooled"))
+
+# figure 1
+ggplot(fig_1, aes(x = estimate, y = outcome, color = cohort, group = cohort, shape = type)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), 
+                  size = 0.5, linewidth = 0.7, position = position_dodge(width = 0.5)) +
+  geom_vline(xintercept = 0, color = "grey25", linetype = "dashed", alpha = 0.5) +  
+  facet_grid(term ~ ., labeller = labeller(term = stress_label)) +
+  scale_x_continuous(limits = c(-3, 3), breaks = c(-3, -2, -1, 0, 1, 2, 3)) + 
+  xlab("Beta (95% Confidence Interval)") +
+  ylab("Cytokine") + 
+  coord_flip() + 
+  scale_y_discrete(labels = cytokines_label) +
+  scale_color_manual(values = c("dodgerblue4", "lightsalmon2", "palegreen4")) + 
+  theme(
+    text = element_text(family = "Optima"),
+    legend.position = "bottom",  
+    panel.spacing = unit(2, "lines"),
+    legend.key.size = unit(0.5, "cm"),
+    legend.text = element_text(size = 10)
+  )
+```
+
+##### Table S4
+
+Associations between experiences of stressful life events (1-3 and >4 compared to 0) and natural log transformed maternal cytokines (pg/mL) in the San Francisco Women’s Option Center (WOC), Atlanta Maternal-Child Cohort (ATL), and pooled cohort matched on propensity scores, estimated using linear regression. 
+ 
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+table_s3 <- fig_1 %>%
+  mutate(outcome = recode(outcome,
+                      "`IFN-Gamma_log`" = "IFN-Gamma",
+                      "`IL-10_log`" = "IL-10",
+                      "`IL-6_log`" = "IL-6",
+                      "`TNF-Alpha_log`" = "TNF-Alpha"),
+         term = stress_label[term]) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate("beta_ci" = paste0(estimate, " (", conf.low, ", ", conf.high, ")"))  %>%
+  dplyr::select(cohort, term, N, outcome, beta_ci) %>%
+  pivot_wider(names_from = outcome, values_from = beta_ci) %>%
+  select(term, cohort, N, `TNF-Alpha`, `IFN-Gamma`, `IL-10`, `IL-6`) %>%
+  gt(groupname_col = 'term', rowname_col = 'cohort') %>%
+   opt_align_table_header(align = "left") %>%
+cols_label(
+  term = "Experiences of stressful life events",
+  cohort = "Cohort",
+  `TNF-Alpha` = md("TNF-Alpha<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IFN-Gamma` = md("IFN-Gamma<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IL-10` = md("IL-10<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IL-6` = md("IL-6<br><span style='font-weight:normal'>(Beta, 95% CI)</span>")
+) %>%
+  gt_theme_538()
+
+table_s3
+```
+
+
+
+##### Table S5
+
+Associations between experiences of stressful life events (1-3 and >4 compared to 0) and natural log transformed maternal cytokines (pg/mL) in the Atlanta Maternal-Child Cohort (ATL), not matched on propensity scores, estimated using linear regression
+
+```{r class.output="scroll-500",  message = FALSE}
+### ATL 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- lm(formula = formula, data = atl_m)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_atl_fig1 <- do.call(rbind, models) 
+
+# format output
+reg_atl_fig1 <- reg_atl_fig1 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, N, term, estimate, conf.low, conf.high) %>%
+  # create pro/anti/both/chemokine column
+  mutate(type = case_when(
+    outcome %in% c("`IFN-Gamma_log`", "`TNF-Alpha_log`") ~ "Pro-inflammatory",
+    outcome %in% c("`IL-10_log`") ~ "Anti-inflammatory",
+    outcome %in% c("`IL-6_log`") ~ "Both")) %>%
+  mutate(cohort = "ATL")
+
+# order
+reg_atl_fig1$term <- factor(reg_atl_fig1$term, levels = c("stress_1_31", "stress_41"))
+reg_atl_fig1$outcome <- factor(reg_atl_fig1$outcome, levels = c("`TNF-Alpha_log`", "`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`"))
+
+```
+
+
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+table_s3 <- reg_atl_fig1 %>%
+  mutate(outcome = recode(outcome,
+                          "`IFN-Gamma_log`" = "IFN-Gamma",
+                          "`IL-10_log`" = "IL-10",
+                          "`IL-6_log`" = "IL-6",
+                          "`TNF-Alpha_log`" = "TNF-Alpha"),
+         term = stress_label[term]) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate("beta_ci" = paste0(estimate, " (", conf.low, ", ", conf.high, ")"))  %>%
+  dplyr::select(cohort, term, N, outcome, beta_ci) %>%
+  pivot_wider(names_from = outcome, values_from = beta_ci) %>%
+  select(term, cohort, N, `TNF-Alpha`, `IFN-Gamma`, `IL-10`, `IL-6`) %>%
+  gt(groupname_col = 'term', rowname_col = 'cohort') %>%
+  opt_align_table_header(align = "left") %>%
+  cols_label(
+    term = "Experiences of stressful life events",
+    `TNF-Alpha` = md("TNF-Alpha<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+    `IFN-Gamma` = md("IFN-Gamma<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+    `IL-10` = md("IL-10<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+    `IL-6` = md("IL-6<br><span style='font-weight:normal'>(Beta, 95% CI)</span>")
+  ) %>%
+  gt_theme_538()
+
+table_s3
+```
+
+
+#### Figure 2 {.tabset}
+
+```{r class.output="scroll-500", message = FALSE}
+### cord 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IL-28A_log`", "`IL-6_log`", "`IL-8_log`", "`IL-7_log`", "CXCL10_log", "`IL-10_log`", "CCL22_log", "`IFN-Gamma_log`", "CCL3_log", "CCL4_log", "`IL-4_log`", "`IL-2_log`", "CXCL9_log", "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`", "`IL-12_log`", "CCL17_log", "`IL-1Beta_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], "+ mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- lm(formula = formula, data = woc_cord)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_cord_fig2 <- do.call(rbind, models) 
+
+# format output 
+reg_cord_fig2 <- reg_cord_fig2 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, term, N, estimate, conf.low, conf.high) %>%
+# Create type column 
+  mutate(type = case_when(
+    outcome %in% c("`IL-8_log`",  "CXCL10_log", "CCL22_log", "CCL3_log", "CCL4_log", "CXCL9_log", "CCL17_log") ~ "Chemokine",
+    outcome %in% c("`IL-7_log`", "`IFN-Gamma_log`", "`IL-2_log`",  "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`" ,"`IL-12_log`", "`IL-1Beta_log`") ~ "Pro-inflammatory",
+    outcome %in% c("`IL-10_log`" ,"`IL-4_log`") ~ "Anti-inflammatory",
+    outcome %in% c("`IL-6_log`") ~ "Both",
+    outcome %in% c("`IL-28A_log`") ~ "Immunomodulatory"
+  )) %>% 
+  mutate(matrix = "Cord")
+
+# order
+reg_cord_fig2$term <- factor(reg_cord_fig2$term, levels = c("stress_1_31", "stress_41"))
+reg_cord_fig2$outcome <- factor(reg_cord_fig2$outcome, levels = c("`IL-7_log`", "`IFN-Gamma_log`", "`IL-2_log`",  "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`" ,"`IL-12_log`", "`IL-1Beta_log`", "`IL-10_log`" ,"`IL-4_log`", "`IL-6_log`", "`IL-28A_log`", "`IL-8_log`",  "CXCL10_log", "CCL22_log", "CCL3_log", "CCL4_log", "CXCL9_log", "CCL17_log"))
+```
+
+```{r class.output="scroll-500", message = FALSE}
+### placental 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IL-28A_log`", "`IL-6_log`", "`IL-8_log`", "CXCL10_log", "`IL-10_log`", "CCL2_log", "CCL3_log", "CCL22_log", "CCL4_log", "`IL-4_log`", "`IL-2_log`", "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`", "`IL-12_log`", "`IL-1Beta_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- lm(formula = formula, data = woc_plac)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_plac_fig2 <- do.call(rbind, models) 
+
+# format output 
+reg_plac_fig2 <- reg_plac_fig2 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, term, N, estimate, conf.low, conf.high) %>%
+  mutate(type = case_when(
+    outcome %in% c("`IL-8_log`", "CXCL10_log", "CCL2_log", "CCL3_log", "CCL22_log", "CCL4_log") ~ "Chemokine",
+    outcome %in% c("`IL-2_log`", "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`", "`IL-12_log`", "`IL-1Beta_log`") ~ "Pro-inflammatory",
+    outcome %in% c("`IL-10_log`",  "`IL-4_log`") ~ "Anti-inflammatory",
+    outcome %in% c("`IL-6_log`") ~ "Both",
+    outcome %in% c("`IL-28A_log`") ~ "Immunomodulatory"
+      )) %>% 
+  mutate(matrix = "Placental")
+
+# order
+reg_plac_fig2$term <- factor(reg_plac_fig2$term, levels = c("stress_1_31", "stress_41"))
+```
+
+```{r class.output="scroll-500", message = FALSE}
+### maternal
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IL-28A_log`", "`IL-6_log`", "`IL-8_log`", "`IL-7_log`", "CXCL10_log", "`IL-10_log`", "CCL2_log", "`IFN-Gamma_log`", "CCL3_log", "CCL22_log", "CCL4_log", "`IL-4_log`", "CXCL9_log", "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`", "CCL17_log", "`IL-1Beta_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- lm(formula = formula, data = woc_mat_full)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_mat_fig2 <- do.call(rbind, models) 
+
+# format output 
+reg_mat_fig2 <- reg_mat_fig2 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, term, N, estimate, conf.low, conf.high) %>%
+# create type column 
+  mutate(type = case_when(
+    outcome %in% c("`IL-8_log`",  "CXCL10_log", "CCL2_log", "CCL3_log","CCL22_log", "CCL4_log",  "CXCL9_log", "CCL17_log") ~ "Chemokine",
+    outcome %in% c("`IL-7_log`", "`IFN-Gamma_log`", "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`", "`IL-1Beta_log`") ~ "Pro-inflammatory",
+    outcome %in% c("`IL-10_log`","`IL-4_log`") ~ "Anti-inflammatory",
+    outcome %in% c("`IL-6_log`") ~ "Both",
+    outcome %in% c("`IL-28A_log`") ~ "Immunomodulatory")) %>% 
+  mutate(matrix = "Maternal")
+
+# order
+reg_mat_fig2$term <- factor(reg_mat_fig2$term, levels = c("stress_1_31", "stress_41"))
+```
+
+```{r class.output="scroll-500", message = FALSE}
+##### 1-3 stressors
+
+# subset 1-3 stressors
+reg_mat_13 <- reg_mat_fig2 %>% filter(term == "stress_1_31") 
+reg_cord_13 <- reg_cord_fig2 %>% filter(term == "stress_1_31") 
+reg_plac_13 <- reg_plac_fig2 %>% filter(term == "stress_1_31") 
+
+one_three <- rbind(reg_mat_13, reg_cord_13, reg_plac_13)
+
+# order
+one_three$outcome <- factor(one_three$outcome, levels = c("`IL-2_log`", "`IL-7_log`", "`IL-12_log`", "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`", "`IFN-Gamma_log`", "`IL-1Beta_log`", "`IL-10_log`","`IL-4_log`", "`IL-6_log`", "`IL-28A_log`", "`IL-8_log`",  "CXCL10_log", "CCL22_log", "CCL2_log", "CCL3_log", "CCL4_log",  "CXCL9_log", "CCL17_log"))
+
+one_three$matrix <- factor(one_three$matrix, levels = c("Maternal", "Placental", "Cord"))
+```
+
+```{r class.output="scroll-500",  message = FALSE}
+##### 4 + stressors 
+
+# subset 4 + stressors
+reg_mat_4 <- reg_mat_fig2 %>% filter(term == "stress_41") 
+reg_cord_4 <- reg_cord_fig2 %>% filter(term == "stress_41") 
+reg_plac_4 <- reg_plac_fig2 %>% filter(term == "stress_41") 
+
+four <- rbind(reg_mat_4, reg_cord_4, reg_plac_4)
+
+# order
+four$outcome <- factor(four$outcome, levels = c("`IL-2_log`", "`IL-7_log`", "`IL-12_log`", "`IFN-Alpha_log`", "`TNF-Alpha_log`", "`TNF-RI_log`", "`IFN-Gamma_log`", "`IL-1Beta_log`", "`IL-10_log`","`IL-4_log`", "`IL-6_log`", "`IL-28A_log`", "`IL-8_log`",  "CXCL10_log", "CCL22_log", "CCL2_log", "CCL3_log", "CCL4_log",  "CXCL9_log", "CCL17_log"))
+
+four$matrix <- factor(four$matrix, levels = c("Maternal", "Placental", "Cord"))
+
+```
+
+##### Figure 2
+
+Associations between experiences of stressful life events (1-3 and >4 compared to 0) and natural log transformed cytokines in maternal blood, cord blood, and placenta (pg/mL) in the San Francisco Women’s Option Center (WOC) not matched on propensity scores, estimated using linear regression.
+
+```{r class.output="scroll-500", message = FALSE, fig.width=15, fig.height = 10}
+# plot
+one_three_plot <- ggplot(one_three, aes(x = estimate, y = outcome, shape = type)) +
+  geom_point(size =1) +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), size = 1, linewidth = 1.5) +
+  geom_vline(xintercept = 0, color = "grey25", linetype = "dashed", alpha = 0.5) +  
+  facet_wrap(matrix~., ncol=1) + 
+  xlab("Beta (95% Confidence Interval)")+ 
+  ggtitle("1-3 SLEs") + 
+  ylab("Cytokines") + 
+  scale_y_discrete(labels = cytokines_full_label) + 
+    scale_x_continuous(limits = c(-2.5, 3), breaks = c(-2, -1, 0, 1, 2, 3)) + 
+  coord_flip() + 
+  theme(text = element_text(family = "Helvetica"),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+four_plot <- ggplot(four, aes(x = estimate, y = outcome, shape = type)) +
+  geom_point(size = 1) +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), size = 1, linewidth = 1.5) +
+  geom_vline(xintercept = 0, color = "grey25", linetype = "dashed", alpha = 0.5) +  
+  facet_wrap(matrix~., ncol=1) + 
+  xlab("Beta (95% Confidence Interval)")+ 
+  ggtitle("≥ 4 SLEs") + 
+  ylab("Cytokines") + 
+  scale_y_discrete(labels = cytokines_full_label) + 
+  scale_x_continuous(limits = c(-2.5, 3), breaks = c(-2, -1, 0, 1, 2, 3)) + 
+  coord_flip() + 
+  theme(text = element_text(family = "Helvetica"),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5))
+
+# Arrange
+
+
+ ggarrange(one_three_plot, four_plot, ncol = 2, common.legend = TRUE,legend="bottom") 
+
+
+```
+
+##### Table S6
+
+Associations between experiences of stressful life events (1-3 and >4 compared to 0) and natural log transformed cytokines in maternal blood, cord blood, and placenta (pg/mL) in the San Francisco Women’s Option Center (WOC) not matched on propensity scores, estimated using linear regression.
+
+Note: Models are adjusted for maternal age, maternal education, maternal BMI, parity, smoke, and gestational age. Abbreviations: CI: Confidence Interval.
+ 
+```{r class.output="scroll-500", message = FALSE}
+table_s4 <- rbind(one_three, four)
+
+# Table
+table_s4 <- table_s4%>%
+  mutate(outcome = recode(outcome,
+  "`IL-7_log`" = "IL-7", 
+  "`IFN-Gamma_log`" = "IFN-Gamma", 
+  "`IFN-Alpha_log`" = "IFN-Alpha",
+  "`TNF-Alpha_log`" = "TNF-Alpha", 
+  "`TNF-RI_log`" = "TNF-RI",
+  "`IL-12_log`" = "IL-12",
+  "`IL-1Beta_log`" = "IL-1Beta",
+  "`IL-2_log`" = "IL-2", 
+  "`IL-4_log`" = "Il-4",
+  "`IL-10_log`" = "IL-10", 
+  "`IL-6_log`" = "IL-6", 
+  "`IL-8_log`" = "IL-8", 
+  "CXCL10_log" = "CXCL-10", 
+  "CCL22_log" = "CCL-22", 
+  "CCL2_log" = "CCL-2", 
+  "CCL3_log" = "CCL-3", 
+  "CCL4_log" =" CCL-4", 
+  "CXCL9_log" = "CXCL-9",  
+  "CCL17_log" = "CCL-17", 
+  "`IL-28A_log`" = "IL-28A")) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate(beta_ci = paste0(estimate, " (", conf.low, ", ", conf.high, ")"))  %>%
+  dplyr::select(term, matrix, N, outcome, beta_ci) %>%
+  pivot_wider(names_from = term, values_from = c("N", "beta_ci")) %>%
+  select(outcome, matrix, N_stress_1_31, beta_ci_stress_1_31, N_stress_41, beta_ci_stress_41) %>%
+  gt(groupname_col = 'outcome', rowname_col = "matrix") %>%
+   opt_align_table_header(align = "left") %>%
+    cols_label(
+    outcome = "Cytokine",
+    matrix = "Matrix",
+    N_stress_1_31 = "N",
+    beta_ci_stress_1_31 = "Beta (CI)",
+    N_stress_41 = "N",
+    beta_ci_stress_41 = "Beta (CI)") %>%
+  tab_spanner(label = "1-3 SLEs",
+              columns = 3:4) %>%
+    tab_spanner(label = "≥ 4 SLEs",
+              columns = 5:6) %>%
+  gt_theme_538()   
+
+table_s4
+```
+
+#### Table S7
+
+Sensitivity analyses for the association between experiences of stressful life events (1-3 and >4 compared to 0) and natural log transformed maternal cytokines (pg/mL), additionally adjusted for maternal infection (in ATL, matched on propensity scores), maternal race/ethnicity and social (in the Women’s Options Center, matched on propensity scores).
+
+Note: Models are adjusted for maternal age, maternal education, maternal BMI, parity, smoke, and gestational age. Abbreviations: CI: Confidence Interval.
+
+```{r  class.output="scroll-500", warning = FALSE, message = FALSE,  fig.width=20, fig.height = 15}
+
+### mat race eth 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], "+ mat_age + mat_educ + mat_bmi + parity + smoke + gest_age + mat_race_eth"))
+    model <- lm(formula = formula, weights=ps_weight, data = matched)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_pooled_race <- do.call(rbind, models) 
+
+# format 
+reg_pooled_race <- reg_pooled_race %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, term, N, estimate, conf.low, conf.high) %>%
+  mutate(sensitivity = "Maternal race/ethnicity")
+
+reg_pooled_race$term <- factor(reg_pooled_race$term, levels = c("stress_1_31", "stress_41"))
+
+### social support 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], "+ mat_age + mat_educ + mat_bmi + parity + smoke + gest_age + soc_supp"))
+    model <- lm(formula = formula, weights=ps_weight, data = matched)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_pooled_soc <- do.call(rbind, models) 
+
+# Format 
+reg_pooled_soc <- reg_pooled_soc %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, term, N, estimate, conf.low, conf.high) %>%
+   mutate(sensitivity = "Social support")
+
+reg_pooled_soc$term <- factor(reg_pooled_soc$term, levels = c("stress_1_31", "stress_41"))
+
+## infection 
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], "+ mat_age + mat_educ + mat_bmi + parity + smoke + gest_age + any_infec"))
+    model <- lm(formula = formula,weights=ps_weight,  data = matched)
+    n <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_pooled_infec <- do.call(rbind, models) 
+
+# format 
+reg_pooled_infec <- reg_pooled_infec %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, term, N, estimate, conf.low, conf.high) %>%
+  mutate(sensitivity = "Infection")
+
+reg_pooled_infec$term <- factor(reg_pooled_infec$term, levels = c("stress_1_31", "stress_41"))
+
+# combine regression results
+tables5 <- rbind(reg_pooled_race, reg_pooled_soc, reg_pooled_infec)
+# table
+tables5 <- tables5 %>%
+  mutate(outcome = recode(outcome,
+                      "`IFN-Gamma_log`" = "IFN-Gamma",
+                      "`IL-10_log`" = "IL-10",
+                      "`IL-6_log`" = "IL-6",
+                      "`TNF-Alpha_log`" = "TNF-Alpha"),
+         term = stress_label[term]) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate(beta_ci = paste0(estimate, " (", conf.low, ", ", conf.high, ")"))  %>%
+  dplyr::select(term, sensitivity, N, outcome, beta_ci) %>%
+  pivot_wider(names_from = outcome, values_from = beta_ci) %>%
+  select(term, sensitivity, N, `TNF-Alpha`, `IFN-Gamma`, `IL-10`, `IL-6`) %>%
+  gt(groupname_col = 'term', rowname_col = 'sensitivity') %>%
+   opt_align_table_header(align = "left") %>%
+cols_label(
+  term = "Experiences of stressful life events",
+  sensitivity = "",
+  `TNF-Alpha` = md("TNF-Alpha<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IFN-Gamma` = md("IFN-Gamma<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IL-10` = md("IL-10<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IL-6` = md("IL-6<br><span style='font-weight:normal'>(Beta, 95% CI)</span>")
+) %>%
+  gt_theme_538()
+
+tables5
+```
+
+#### Figure 3  {.tabset}
+
+```{r class.output="scroll-500", class.output="scroll-500", warning = FALSE, message = FALSE}
+### maternal complications
+
+# assign predictors, outcomes
+predictors <- c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`")
+outcomes <- c("prec", "ghyp", "any_hyper")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], "+ mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- glm(formula = formula, family = "binomial", data = atl_full)
+    n_obs <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n_obs)
+  }
+}
+reg_mat_comp_cyt <- do.call(rbind, models) 
+
+
+# format 
+reg_mat_comp_cyt <- reg_mat_comp_cyt %>% 
+  filter(term %in% c("`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`","`TNF-Alpha_log`"))  %>%
+  dplyr::select(N, outcome, term, estimate, conf.low, conf.high) %>%
+  mutate(outcome= recode(outcome, "any_hyper" = "Hypertensive disorder", "prec" = "Preeclambsia", "ghyp" = "Gestational hypertension")) %>%
+    mutate(type = case_when(
+    term %in% c("`IFN-Gamma_log`", "`TNF-Alpha_log`") ~ "Pro-inflammatory",
+    term %in% c("`IL-10_log`") ~ "Anti-inflammatory",
+    term %in% c("`IL-6_log`") ~ "Both")) %>%
+  mutate(across(c(estimate, conf.low, conf.high), exp))
+
+
+reg_mat_comp_cyt$term <- factor(reg_mat_comp_cyt$term, levels = c("`TNF-Alpha_log`", "`IFN-Gamma_log`", "`IL-10_log`", "`IL-6_log`"))
+
+mat_comp_cyt <- reg_mat_comp_cyt %>% filter(outcome == "Hypertensive disorder")
+mat_comp_cyt <- ggplot(mat_comp_cyt, aes(x = estimate, y = term, group = outcome, shape = type)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), size = 1, linewidth = 1, position=position_dodge(width=0.5)) +
+  geom_vline(xintercept = 1, color = "grey25", linetype = "dashed", alpha = 0.5) +  
+  coord_flip() + 
+  scale_x_continuous(limits = c(0, 2), breaks = c(0,1,2)) + 
+  xlab("Odds Ratio (95% Confidence Interval)") +
+  ggtitle("Any Hypertensive Disorder") +
+  ylab("Cytokine") + 
+  scale_y_discrete(labels = cytokines_label) +
+  theme(legend.position = "bottom") + 
+theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.text.y = element_text(size = 15)) 
+```
+
+
+```{r class.output="scroll-500", warning = FALSE, message = FALSE}
+### maternal complications
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("prec","ghyp", "any_hyper")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], "+ mat_age + mat_educ + mat_bmi + parity + smoke + gest_age"))
+    model <- glm(formula = formula, family = "binomial", data = atl_full)
+    n_obs <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n_obs)
+  }
+}
+reg_mat_comp_stress <- do.call(rbind, models) 
+
+
+# format 
+reg_mat_comp_stress <- reg_mat_comp_stress %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(N, outcome, term, estimate, conf.low, conf.high) %>%
+  mutate(outcome= recode(outcome, "ghyp" = "Gestational hypertension", "prec" = "Preeclambsia", "any_hyper" = "Hypertensive disorder"))%>%
+  mutate(across(c(estimate, conf.low, conf.high), exp))
+
+mat_comp_stress <- reg_mat_comp_stress %>% filter(outcome == "Hypertensive disorder")
+mat_comp_stress <- ggplot(mat_comp_stress, aes(x = estimate, y = term, group = outcome)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_pointrange(aes(xmin = conf.low, xmax = conf.high), size = 1, linewidth = 1, position=position_dodge(width=0.5)) +
+  geom_vline(xintercept = 1, color = "grey25", linetype = "dashed", alpha = 0.5) +  
+  coord_flip() + 
+  scale_x_continuous(limits = c(0, 7), breaks = c(0,1,4,7)) + 
+  xlab("Odds Ratio (95% Confidence Interval)") +
+  ggtitle("Any Hypertensive Disorder") +
+  ylab("Experiences of stressful life events") + 
+  scale_y_discrete(labels = stress_label) +
+  theme(legend.position = "bottom") + 
+theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.text.y = element_text(size = 15))
+```
+
+##### Figure 3
+
+Odds ratios and 95% confidence intervals for the associations between experiences of stressful life events (1-3 and >4 compared to 0) and hypertensive disorders of pregnancy, and for the association between natural log transformed cytokines in maternal blood (pg/mL) and hypertensive disorders of pregnancy, in the Atlanta Maternal-Child Cohort (ATL) not matched on propensity scores, estimated using logistic regression. 
+
+```{r  class.output="scroll-500", warning = FALSE, message = FALSE, fig.width=7, fig.height = 7}
+par(mar = c(1, 4, 2, 2))
+grid.arrange(mat_comp_stress, mat_comp_cyt, ncol = 1)
+```
+
+
+##### Table S8
+
+Odds ratios and 95% confidence intervals for the associations between experiences of stressful life events (1-3 and >4 compared to 0) and hypertensive disorders of pregnancy, in the Atlanta Maternal-Child Cohort (ATL) not matched on propensity scores, estimated using logistic regression. 
+
+Note: Hypertensive disorders of pregnancy include preeclampsia and gestational hypertension. Models are adjusted for maternal age, maternal education, maternal BMI, parity, smoke, and gestational age. Abbreviations: CI: Confidence Interval.
+```{r class.output="scroll-500", warning = FALSE, message = FALSE, fig.width=20, fig.height = 20}
+# table
+
+tables6 <- reg_mat_comp_stress %>%
+   mutate(term = stress_label[term]) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate(or_ci = paste0(estimate, " (", conf.low, ", ", conf.high, ")"))  %>%
+  dplyr::select(term, outcome,N,or_ci) %>%
+  pivot_wider(names_from = outcome, values_from = c("N", "or_ci")) %>%
+  select(term, `N_Hypertensive disorder`, `or_ci_Hypertensive disorder`, `N_Gestational hypertension`, `or_ci_Gestational hypertension`, N_Preeclambsia,
+or_ci_Preeclambsia) %>%
+  gt() %>%
+  cols_label(
+    term = html("Cytokine"), `N_Hypertensive disorder` =  "N", `or_ci_Hypertensive disorder` = "Odds ratio (95% CI)", `N_Gestational hypertension` = "N", `or_ci_Gestational hypertension` = "Odds ratio (95% CI)", N_Preeclambsia = "N", `or_ci_Preeclambsia` = "Odds ratio (95% CI)") %>%
+  tab_spanner(
+    label = md("Hypertensive disorder"),
+    columns = 2:3
+  ) %>%
+  tab_spanner(
+    label = md("Gestational hypertension"),
+    columns = 4:5
+  )  %>%
+  tab_spanner(
+    label = md("Preeclambisa"),
+    columns = 6:7
+  ) %>%
+  gt_theme_538 
+
+tables6
+```
+
+##### Table S9
+
+Odds ratios and 95% confidence intervals for the association between natural log transformed cytokines in maternal blood (pg/mL) and hypertensive disorders of pregnancy, in the Atlanta Maternal-Child Cohort (ATL) not matched on propensity scores, estimated using logistic regression. 
+
+Note: Hypertensive disorders of pregnancy include preeclampsia and gestational hypertension. Models are adjusted for maternal age, maternal education, maternal BMI, parity, smoke, and gestational age.
+```{r  class.output="scroll-500", warning = FALSE, message = FALSE}
+# table
+table_s7 <- reg_mat_comp_cyt %>%
+  mutate(term = recode(term,
+                      "`IFN-Gamma_log`" = "IFN-Gamma",
+                      "`IL-10_log`" = "IL-10",
+                      "`IL-6_log`" = "IL-6",
+                      "`TNF-Alpha_log`" = "TNF-Alpha")) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  mutate(or_ci = paste0(estimate, " (", conf.low, ", ", conf.high, ")"))  %>%
+  dplyr::select(term, outcome,N, or_ci) %>%
+  pivot_wider(names_from = outcome, values_from = c("N", "or_ci")) %>%
+  select(term, `N_Hypertensive disorder`, `or_ci_Hypertensive disorder`, `N_Gestational hypertension`, `or_ci_Gestational hypertension`, N_Preeclambsia,
+or_ci_Preeclambsia) %>%
+  gt() %>%
+  cols_label(
+    term = html("Cytokine"), `N_Hypertensive disorder` =  "N", `or_ci_Hypertensive disorder` = "Odds ratio (95% CI)", `N_Gestational hypertension` = "N", `or_ci_Gestational hypertension` = "Odds ratio (95% CI)", N_Preeclambsia = "N", `or_ci_Preeclambsia` = "Odds ratio (95% CI)") %>%
+  tab_spanner(
+    label = md("Hypertensive disorder"),
+    columns = 2:3
+  ) %>%
+  tab_spanner(
+    label = md("Gestational hypertension"),
+    columns = 4:5
+  )  %>%
+  tab_spanner(
+    label = md("Preeclambisa"),
+    columns = 6:7
+  ) %>%
+  gt_theme_538()
+
+table_s7
+```
+
+###### Table S10
+
+Table S10:  Sensitivity analyses for the association between experiences of stressful life events (1-3 and >4 compared to 0) and natural log transformed maternal cytokines (pg/mL) stratified by study visit in ATL (N=441).  
+
+
+Note: Models are adjusted for maternal age, educational attainment, BMI, parity, smoking, and gestational age at visit. Abbreviations: CI: Confidence Interval  
+```{r}
+### visit 1
+
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_v1_log`", "`IL-6_v1_log`","`TNF-Alpha_v1_log`", "`IL-10_v1_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gasamp1_wk.10"))
+    model <- lm(formula = formula, data = atl_full_visit)
+    n  <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_atl_v1<- do.call(rbind, models) 
+
+# format output
+reg_atl_v1  <- reg_atl_v1 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, N, term, estimate, conf.low, conf.high) %>%
+  mutate(visit = "1")
+
+
+### vsist 2
+# assign predictors, outcomes
+predictors <- c("stress_1_3", "stress_4")
+outcomes <- c("`IFN-Gamma_v2_log`", "`IL-6_v2_log`","`TNF-Alpha_v2_log`", "`IL-10_v2_log`")
+
+# loop regression
+models <- list()
+for (i in 1:length(outcomes)) {
+  for (j in 1:length(predictors)) {
+    model_name <- paste0(outcomes[i], " ~ ", predictors[j])
+    formula <- as.formula(paste(outcomes[i], " ~ ", predictors[j], " + mat_age + mat_educ + mat_bmi + parity + smoke + gasamp2_wk.10"))
+    model <- lm(formula = formula, data = atl_full_visit)
+    n  <- nobs(model)
+    models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], N = n)
+  }
+}
+reg_atl_v2 <- do.call(rbind, models) 
+
+# format output
+reg_atl_v2 <- reg_atl_v2 %>% 
+  filter(term %in% c("stress_1_31", "stress_41"))  %>%
+  dplyr::select(outcome, N, term, estimate, conf.low, conf.high) %>%
+  mutate(visit = "2")
+
+bind_rows(reg_atl_v1, reg_atl_v2) %>%
+    mutate_if(is.numeric, round, digits = 2) %>%
+    mutate(outcome = recode(outcome,
+                      "`IFN-Gamma_v1_log`" = "IFN-Gamma",
+                      "`IL-10_v1_log`" = "IL-10",
+                      "`IL-6_v1_log`" = "IL-6",
+                      "`TNF-Alpha_v1_log`" = "TNF-Alpha",
+                      "`IFN-Gamma_v2_log`" = "IFN-Gamma",
+                      "`IL-10_v2_log`" = "IL-10",
+                      "`IL-6_v2_log`" = "IL-6",
+                      "`TNF-Alpha_v2_log`" = "TNF-Alpha"),
+           term = recode(term,
+                         "stress_1_31" = "1-3 SLEs",
+                         "stress_41" = "≥ 4 SLEs")) %>%
+    mutate(beta_ci = paste0(estimate, " (", conf.low, ", ", conf.high, ")"))  %>%
+    select(outcome, term, visit, N, beta_ci) %>%
+    pivot_wider(names_from = outcome, values_from = beta_ci) %>%
+    select(term, visit, N, `TNF-Alpha`, `IFN-Gamma`, `IL-10`, `IL-6`) %>%
+    gt(groupname_col = "term", rowname_col = "visit") %>%
+    cols_label(
+  `TNF-Alpha` = md("TNF-Alpha<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IFN-Gamma` = md("IFN-Gamma<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IL-10` = md("IL-10<br><span style='font-weight:normal'>(Beta, 95% CI)</span>"),
+  `IL-6` = md("IL-6<br><span style='font-weight:normal'>(Beta, 95% CI)</span>")) %>%
+    gt_theme_538()
+
+
+
+```
+
+
+## Session Information
+```{r}
+# save session info
+
+sessionInfo()
+```
+
