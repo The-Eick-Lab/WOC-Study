@@ -1,0 +1,1194 @@
+---
+title: "Stess_PBDE_Cytokine_final"
+author: "Neha Sehgal"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(purrr)
+library(broom)
+#install.packages("OpenMx")
+library("tidySEM")
+library("OpenMx")
+library(tidyverse)
+library(ggplot2)
+library(table1)
+library(flextable)
+library(broom)
+library(plotly)
+library(mice)
+library(miceafter)
+library(gt)
+library(gtsummary)
+library(cowplot)
+library(corrplot)
+library(gtExtras)
+library(qgcomp)
+library(qgcompint)
+library(DataExplorer)
+```
+
+## 0. Data Import
+```{r data_import, eval=FALSE, include=FALSE}
+# setwd("C:/Users/neha/OneDrive - Emory/Desktop/ResearchProjects/Stress_PBDEs_Eick/Eick, Stephanie M.'s files - Kaegan_Stress PBDEs and inflammation/code/replicate_Data_Analysis_R_NS")
+
+load("Final_R_data.Rdata") # load the r environment from the R project in Neha's files; loaded dataframes are a mix of Keagan's dataframes, neha's and raw/orginal data sets
+
+#it is prefered to load "tidysem_working _02262026.RData". If that is not found or loads empty, then load Final_R_data.Rda. It has been made from the following code: 
+    # save(woc, woc_og,
+    #      woc_lca, woc_lca_tidysem, # same data with class variable recoded, lines 430-432
+    #      WOC_cytokines_cleaned_06_24_2024, # keagan's or SME's original
+    #      well_detect_cytokines,
+    #      bde_label_iqr, bde_label_nolog_t, bde_names, cytokine_label_log_t, cytokine_label_nolog_t, cytokine_label_plot, exposures, outcomes_p, outcomes_m, predictors, stress_names, variables,
+    #      file = "Final_R_data.Rda")
+
+# if you loaded the tidysem_working _02262026.RData and want to rerun all the code, then you can remove all the results that are saved in the tidysem_working _02262026.RData environment and start afresh by running the following lines: 
+keep<- c("woc", # imputed - not needed for this. 
+         "woc_pbde", "woc_plac", "woc_inf",
+         "woc_og",# unimputed
+         "woc_lca_tidysem", 
+     "WOC_cytokines_cleaned_06_24_2024", # keagan's or SME's original
+     "well_detect_cytokines",
+     "bde_label_iqr", "bde_label_nolog_t", "bde_names", "cytokine_label_log_t", "cytokine_label_nolog_t", "cytokine_label_plot", "exposures", "outcomes_p", "outcomes_m", "predictors", "stress_names", "variables")
+rm(list = setdiff(ls(), keep)) 
+
+# load raw data from Stephanie Eick
+# load WOC PBDE data (N = 6,972)
+WOC_serum_PBDEs_wide_clean_04_09_2025 <- read_csv("WOC_serum PBDEs_wide_clean_04.09.2025.csv")
+
+# load placental data (already variables for lipid adjusted) ng.g/lipid
+WOC_Placenta_PBDE_Clean_12_06_2024 <- read.csv("WOC_Placenta_PBDE_Clean_12.06.2024.csv")
+
+# load WOC covariate data (N = 2256)
+WOC_covar_and_stress_data_05022024 <- read_csv("WOC covar and stress data_05022024.csv")
+
+# load inflammation data (N = 106) 
+WOC_cytokines_cleaned_06_24_2024 <- read_csv("WOC cytokines_cleaned_06.24.2024.csv")
+```
+
+## 1. Data Recode/Organizations 
+```{r data_recode, echo=FALSE}
+# recode employ and job strain 
+table(woc_og$job.strain, woc_og$employed)
+table1::table1(~job.strain | employed, woc_og %>%  mutate(employed = if_else(is.na(employed) == T, "unemployed", employed)))
+woc_og<- woc_og %>%  mutate(employed =  case_when(employed == 1 ~ "employed", 
+                                                  employed == 0 ~ "unemployed", T ~ employed), 
+                            job.strain = case_when(job.strain == 1 ~ "yes_js", 
+                                                   job.strain == 0 ~ "no_js",  T ~ job.strain), 
+                            
+                           job.strain_employed = paste0(job.strain, "_", employed))
+
+table(woc_og$job.strain_employed)
+# neaten js_employed 
+woc_og<- woc_og %>%  mutate(job.strain_employed = case_when(job.strain_employed == "NA_NA" ~ NA, 
+                                                            job.strain_employed == "NA_unemployed" ~ "Unemployed", 
+                                                            T ~ job.strain_employed))
+
+DataExplorer::plot_missing(woc_og)
+# if you see missingness then: 
+# drop anyone with missing all stressors 
+t <- woc_og%>%  filter(is.na(social.support.cat) & is.na(sle.cat) & 
+                       is.na(job.strain_employed) & is.na(pss.4.cat)) 
+woc_og<- woc_og %>% filter(id != t$id) # THIS may not work if woc_og has no missingness.
+```
+
+
+## 2. Cluster analysis 
+```{r lca}
+####### cluster stress: tidy lca ########
+desc <- tidySEM::descriptives(woc_og %>%  dplyr::select(social.support.cat, sle.cat, job.strain_employed, pss.4.cat) %>% 
+                                mutate(across(1:4, ~as.factor(.))))
+
+desc <- desc[, c("name", "type", "n", "missing", "unique", "mode",
+                 "mode_value", "v")]
+desc
+
+# Step 1. check whether we should do varying variance or not 
+# Fixed variance model
+model_fixed <- mx_lca(data = woc_og %>%  dplyr::select("social.support.cat","sle.cat", "job.strain_employed", "pss.4.cat") 
+                           
+                           %>%
+                             dplyr::rename_with(~ gsub("\\.", "_", .x)) 
+                           %>%  mutate(across(1:4, ~as.ordered(.))), classes = 2, variances = "equal")
+
+# Varying variance model
+model_varying <- mx_lca(data = woc_og %>%  dplyr::select("social.support.cat","sle.cat", "job.strain_employed", "pss.4.cat") 
+                             
+                             %>%
+                               dplyr::rename_with(~ gsub("\\.", "_", .x)) 
+                             %>%  mutate(across(1:4, ~as.ordered(.))), classes = 2, variances = "varying")
+
+# Compare models
+table_fit(list(Fixed = model_fixed, Varying = model_varying))
+
+# Step 2. do LCA with tidylca 
+set.seed(123)
+res <- mx_lca(data = woc_og %>%  dplyr::select("social.support.cat","sle.cat", "job.strain_employed", "pss.4.cat") %>%
+                dplyr::rename_with(~ gsub("\\.", "_", .x))  %>% 
+                mutate(across(1:4, ~as.ordered(.))), 
+              classes = 1:6, # test multiple models fits
+              variances = "fixed")  # use fixed variances 
+
+# view model fit
+kableExtra::kable(print(res)) %>%  kableExtra::kable_styling()
+plot_prob(res[[2]], bw = TRUE)
+#plot_density(res[[2]])
+
+# join estimated classes with woc data
+class<- round(as.data.frame(class_prob(res[[2]], type = "individual")) , 2)
+plot_missing(class)
+
+# bind the class results with original data
+woc_lca_tidysem<- cbind.data.frame(woc_og, class)
+
+# check missing for important variables for modeling 
+plot_missing(
+  woc_lca_tidysem %>%  select(individual.predicted, # exposure 
+                             mat_age, mat_educ,  bmi.procedure, gest.age.procedure, # covariates imp for modeling
+                           # mat_age, mat_educ, marital, bmi.procedure, smoke, mat_race_eth, gest.age.procedure, parity,
+                            bde_47_m, bde_47_m_log, bde_99_m, bde_99_m_log, bde_100_m,  bde_100_m_log, bde_153_m, bde_153_m_log, 
+                            bde_47_p, bde_47_p_log, bde_99_p, bde_99_p_log, bde_100_p, bde_100_p_log, bde_153_p, bde_153_p_log, 
+                            IL.6_m, IL.8_m, IL.7_m, CXCL10_m, CCL2_m, IFN.Gamma_m, CCL3_m, CCL22_m, CCL4_m, IL.4_m, CXCL9_m, IFN.Alpha_m, TNF.Alpha_m, TNF.RI_m, CCL17_m, IL.28A_p, IL.6_p, IL.8_p, CXCL10_p, IL.10_p,  CCL2_p, CCL3_p, CCL22_p, CCL4_p, IL.4_p, IL.2_p, IFN.Alpha_p, TNF.Alpha_p, TNF.RI_p, IL.12_p, IL.1Beta_p, IL.28A_c, IL.6_c, IL.8_c, IL.7_c, IL.10_c, IFN.Gamma_c, IL.4_c, IL.2_c, IFN.Alpha_c, TNF.RI_c, IL.1Beta_c, CCL17_c, CXCL9_c, CCL4_c, CCL22_c, CCL3_c, CCL2_c, CXCL10_c, IL.12_c, 
+                            IL.6_m_log, IL.8_m_log, IL.7_m_log, CXCL10_m_log, CCL2_m_log, IFN.Gamma_m_log, CCL3_m_log, CCL22_m_log, CCL4_m_log, IL.4_m_log, CXCL9_m_log, IFN.Alpha_m_log, TNF.Alpha_m_log, TNF.RI_m_log, CCL17_m_log, IL.28A_p_log, IL.6_p_log, IL.8_p_log, CXCL10_p_log, IL.10_p_log,  CCL2_p_log, CCL3_p_log, CCL22_p_log, CCL4_p_log, IL.4_p_log, IL.2_p_log, IFN.Alpha_p_log, TNF.Alpha_p_log, TNF.RI_p_log, IL.12_p_log, IL.1Beta_p_log, IL.28A_c_log, IL.6_c_log, IL.8_c_log, IL.7_c_log, IL.10_c_log, IFN.Gamma_c_log, IL.4_c_log, IL.2_c_log, IFN.Alpha_c_log, TNF.RI_c_log, IL.1Beta_c_log, CCL17_c_log, CXCL9_c_log, CCL4_c_log, CCL22_c_log, CCL3_c_log, CCL2_c_log, CXCL10_c_log, IL.12_c_log)
+)
+
+## save results
+save(res, woc_og, woc_lca_tidysem, file = "tidysem_lca_woc.Rda")
+## 
+
+```
+
+
+## 3. Univariate/Description Tables
+```{r univar_tables}
+##### univariate analysis ####
+table1::table1(~ job.strain_employed + as.character(employed) + as.character(job.strain)+ as.character(sle.cat)+ 
+                 as.character(social.support.cat) +  as.character(pss.4.cat)| individual.predicted, woc_lca_tidysem)
+
+# rename classes 
+woc_lca_tidysem<- woc_lca_tidysem %>%  mutate(individual.predicted= ifelse(individual.predicted == 1 ,
+                                                                           "Class 1, low stress", # when job strain and emp separate, class 1 - low stress overall
+                                                                           "Class 2, high stress")) # when job strain and emp separate, class 2- high stress overall
+
+
+#### Table 1 - original data #### 
+table1::table1(~insure |individual.predicted , woc_lca_tidysem[, c(64:79, 257)] %>% 
+                 mutate(insure = case_when(insurance == 1| insurance == 3 ~ "private/self pay", 
+                                           insurance == 2 ~ "public")))
+               
+             #  1 = private; 2 = public; 3 = self pay
+               
+                 
+                 
+table1::table1(~.|individual.predicted , woc_lca_tidysem[, c(64:79, 257)] %>% 
+                 mutate(mat_age = as.numeric(mat_age), 
+                        insurance = as.factor(insurance), 
+                        drugs = as.factor(drugs), 
+                        
+                        marital = recode(marital,
+                                         "1" = "Single",
+                                         "2" = "Married or living with partner"),
+                        mat_educ = recode(mat_educ,
+                                          "0" = "≤ High school ",
+                                          "1" = "≥ Some college"),
+                        mat_race_eth = recode(mat_race_eth, 
+                                              "1" = "Latina",
+                                              "2" = "Black",
+                                              "3" = "Other"),
+                        parity = recode(parity,
+                                        "0" = "No prior births",
+                                        "1" = "1 or more prior births"),
+                        smoke = recode(smoke,
+                                       "0" = "Never",
+                                       "1" = "Former"),
+                        sle.cat = recode(sle.cat, 
+                                         "0" = "Low",
+                                         "1" = "High"),        
+                        social.support.cat = recode(social.support.cat,
+                                                    "0" = "Low",
+                                                    "1" = "High"),
+                        job.strain = recode(job.strain,
+                                            "0" = "Low",
+                                            "1" = "High")) %>%
+                 rename("Age" = mat_age,
+                        "Education" = mat_educ,
+                        "Marital status" = marital, 
+                        "Early pregnancy BMI" = bmi.procedure,
+                        "Parity" = parity,
+                        "Smoke" = smoke,
+                        "Race/ethnicity" = mat_race_eth,
+                        "Social support" = social.support.cat,
+                        "Job strain" = job.strain,
+                        "Stressful life events" = sle.cat,
+                        "Perceived stress" = pss.4.cat) )
+
+# add gravida 
+table1::table1(~ grav| individual.predicted, 
+               left_join(woc_lca_tidysem, WOC_covar_and_stress_data_05022024 %>%  select(ppt_id, grav), 
+                         by = c("id" = "ppt_id"))) 
+
+#### Table 2 - original data #### 
+# pbdes
+table1::table1(~., WOC_serum_PBDEs_wide_clean_04_09_2025 %>%  filter(id %in% woc_lca$id) %>%  select(Censored_bde99, Censored_bde47, Censored_bde100, Censored_bde153))
+table1::table1(~., WOC_Placenta_PBDE_Clean_12_06_2024 %>%  filter(ppt_id %in% woc_lca$id) %>% 
+                 select(bde47_lipid_flag, bde99_lipid_flag, bde100_lipid_flag, bde153_lipid_flag) %>%  
+                 mutate_all(as.character))
+
+# inflammation lods
+WOC_cytokines_cleaned_06_24_2024 %>% 
+  filter(ppt_id %in% woc_lca_tidysem$id) %>%  
+  select(ends_with(".m.LOD"), ends_with(".p.LOD")) %>%
+  # select(IL28.m.LOD, IL6.m.LOD, IL8.m.LOD, IL7.m.LOD, CXCL10.m.LOD, IL10.m.LOD, CCL2.m.LOD, IFN.gamma.m.LOD, CCL3.m.LOD, CCL22.m.LOD, CCL4.m.LOD, IL4.m.LOD, IL2.m.LOD, CXCL9.m.LOD, IFN.alpha.m.LOD, TNF.alpha.m.LOD, TNF.RI.m.LOD, IL12.m.LOD, CCL17.m.LOD, IL1.beta.m.LOD,IL28.p.LOD, IL6.p.LOD, IL8.p.LOD, IL7.p.LOD, CXCL10.p.LOD, IL10.p.LOD, CCL2.p.LOD, IFN.gamma.p.LOD, CCL3.p.LOD, CCL22.p.LOD, CCL4.p.LOD, IL4.p.LOD, IL2.p.LOD, CXCL9.p.LOD, IFN.alpha.p.LOD, TNF.alpha.p.LOD, TNF.RI.p.LOD, IL12.p.LOD, CCL17.p.LOD, IL1.beta.p.LOD, IL28.c.LOD, IL6.c.LOD, IL8.c.LOD, IL7.c.LOD, CXCL10.c.LOD, IL10.c.LOD, CCL2.c.LOD, IFN.gamma.c.LOD, CCL3.c.LOD, CCL22.c.LOD, CCL4.c.LOD, IL4.c.LOD, IL2.c.LOD, CXCL9.c.LOD, IFN.alpha.c.LOD, TNF.alpha.c.LOD, TNF.RI.c.LOD, IL12.c.LOD, CCL17.c.LOD, IL1.beta.c.LOD) %>%
+  summarise(across(everything(), ~ round(100 * sum(.x != 1,  na.rm = TRUE) / nrow(woc_lca_tidysem), 0))) %>% 
+  pivot_longer(cols = everything(), names_to = "Cytokine", values_to = "Percentage Above Limit of Detection") %>%
+  mutate(Matrix = case_when(
+    str_detect(Cytokine, "\\.m\\.") ~ "Maternal",
+    str_detect(Cytokine, "\\.p\\.") ~ "Placental",
+    str_detect(Cytokine, "\\.c\\.") ~ "Cord"),
+    Cytokine = str_sub(Cytokine, 0, -7)) %>%
+  gt(groupname_col = "Matrix") %>%
+  tab_style(
+    style = cell_fill(color = "grey"),
+    locations = cells_body(
+      rows = `Percentage Above Limit of Detection` > 70)) %>% # as per sehgal 2025, stress x cytokine paper
+  gt_theme_nytimes() %>%
+  tab_style(
+    style = cell_text(color = "gray20"), 
+    locations = cells_column_labels()     
+  )
+# filter well detected cytokines in N= 63 
+well_detect_cytokines <- WOC_cytokines_cleaned_06_24_2024 %>% 
+  filter(ppt_id %in% woc_lca_tidysem$id) %>%  
+  select(ends_with(".m.LOD"), ends_with(".p.LOD")) %>%
+  # select(IL28.m.LOD, IL6.m.LOD, IL8.m.LOD, IL7.m.LOD, CXCL10.m.LOD, IL10.m.LOD, CCL2.m.LOD, IFN.gamma.m.LOD, CCL3.m.LOD, CCL22.m.LOD, CCL4.m.LOD, IL4.m.LOD, IL2.m.LOD, CXCL9.m.LOD, IFN.alpha.m.LOD, TNF.alpha.m.LOD, TNF.RI.m.LOD, IL12.m.LOD, CCL17.m.LOD, IL1.beta.m.LOD,IL28.p.LOD, IL6.p.LOD, IL8.p.LOD, IL7.p.LOD, CXCL10.p.LOD, IL10.p.LOD, CCL2.p.LOD, IFN.gamma.p.LOD, CCL3.p.LOD, CCL22.p.LOD, CCL4.p.LOD, IL4.p.LOD, IL2.p.LOD, CXCL9.p.LOD, IFN.alpha.p.LOD, TNF.alpha.p.LOD, TNF.RI.p.LOD, IL12.p.LOD, CCL17.p.LOD, IL1.beta.p.LOD, IL28.c.LOD, IL6.c.LOD, IL8.c.LOD, IL7.c.LOD, CXCL10.c.LOD, IL10.c.LOD, CCL2.c.LOD, IFN.gamma.c.LOD, CCL3.c.LOD, CCL22.c.LOD, CCL4.c.LOD, IL4.c.LOD, IL2.c.LOD, CXCL9.c.LOD, IFN.alpha.c.LOD, TNF.alpha.c.LOD, TNF.RI.c.LOD, IL12.c.LOD, CCL17.c.LOD, IL1.beta.c.LOD) %>%
+  summarise(across(everything(), ~ round(100 * sum(.x != 1,  na.rm = TRUE) / nrow(woc_lca_tidysem), 0))) %>% 
+  pivot_longer(cols = everything(), names_to = "Cytokine", values_to = "Percentage Above Limit of Detection") %>%
+  mutate(Matrix = case_when(
+    str_detect(Cytokine, "\\.m\\.") ~ "Maternal",
+    str_detect(Cytokine, "\\.p\\.") ~ "Placental",
+    str_detect(Cytokine, "\\.c\\.") ~ "Cord"), 
+    Cytokine = str_sub(Cytokine, 0, -7)) %>%  
+ filter(`Percentage Above Limit of Detection` > 70)
+
+
+well_detect_cytokines$Cytokine <- str_replace(well_detect_cytokines$Cytokine, "\\.(\\w)", function(m) {
+  paste0(".", str_to_upper(str_sub(m, -1)))
+})
+
+well_detect_cytokines<- well_detect_cytokines %>%  mutate(Cytokine = case_when(Matrix == "Maternal" ~ paste0(Cytokine, "_m"), 
+                                                                               Matrix == "Placental" ~ paste0(Cytokine, "_p"), 
+                                                                               Matrix == "Cord" ~ paste0(Cytokine, "_c")))
+
+  well_detect_cytokines
+# cytokines - table 2 
+dist_c <- woc_lca_tidysem %>% dplyr::select(ends_with("_p"), ends_with("_m"), 
+                                            individual.predicted) # dplyr::select(IL.2_p, IL.7_m, IL.12_p, IFN.Alpha_m, IFN.Alpha_p, TNF.Alpha_m, TNF.Alpha_p, TNF.RI_m, TNF.RI_p, IFN.Gamma_m, IL.1Beta_p, IL.10_p, IL.4_m, IL.4_p, IL.6_m, IL.6_p, IL.28A_p, IL.8_m, IL.8_p, CCL2_m, CCL2_p, CCL3_m, CCL3_p, CCL4_m, CCL4_p, CXCL9_m, CXCL10_m, CXCL10_p, CCL17_m, CCL22_m, CCL22_p, IL.28A_c, IL.6_c, IL.8_c, IL.7_c, IL.10_c, IFN.Gamma_c, IL.4_c, IL.2_c, IFN.Alpha_c, TNF.RI_c, IL.1Beta_c, CCL17_c, CXCL9_c, CCL4_c, CCL22_c, CCL3_c, CCL2_c, CXCL10_c, IL.12_c)
+
+# build function to calculate summary measures: geometric mean, geometric sd, min, med, max
+dist.func <- function(x) {
+  c(
+    geomean = round(exp(mean(log(x), na.rm = TRUE)), 2),
+    geosd = round(exp(sd(log(x), na.rm = TRUE)), 2),      
+    min = round(min(x, na.rm = TRUE), 2),                
+    med = round(median(x, na.rm = TRUE), 2),           
+    max = round(max(x, na.rm = TRUE), 2)                 
+  )
+}
+
+# apply function (use purr instead???)
+dist_c <- as.data.frame(do.call(rbind, lapply(dist_c %>%  filter(individual.predicted == "Class 1, low stress") %>%  
+                                                select(-individual.predicted), dist.func)))
+dist_c %>%
+  mutate(cytokine = rownames(dist_c)) %>%
+  mutate(matrix = case_when(
+    str_detect(cytokine, "_m$") ~ "maternal",
+    str_detect(cytokine, "_p$") ~ "placental",
+    str_detect(cytokine, "_c$") ~ "cord"),
+    cytokine = recode(cytokine, !!!cytokine_label_nolog_t)) %>%
+  select(cytokine, matrix, geomean, geosd) %>%  #, min, med, max) %>%
+  filter(matrix != "cord") %>%  
+  gt(groupname_col = "cytokine", rowname_col = "matrix") %>%
+  cols_label(
+    cytokine = "Cytokine",
+    geomean = "Geometric mean",
+    geosd= "Geometric SD",
+    #min = "Minimum",
+    #med = "Median",
+    #max = "Maximum",
+    matrix = "Matrix") %>%
+  gt_theme_nytimes() %>%
+  tab_style(
+    style = cell_text(color = "gray20"), 
+    locations = cells_column_labels()     
+  )
+
+
+dist_c <- as.data.frame(do.call(rbind, lapply(woc_lca_tidysem %>% dplyr::select(ends_with("_p"), ends_with("_m"), 
+                                                                                individual.predicted) %>%  filter(individual.predicted == "Class 2, high stress") %>%  
+                                                select(-individual.predicted), dist.func)))
+dist_c %>%
+  mutate(cytokine = rownames(dist_c)) %>%
+  mutate(matrix = case_when(
+    str_detect(cytokine, "_m$") ~ "maternal",
+    str_detect(cytokine, "_p$") ~ "placental",
+    str_detect(cytokine, "_c$") ~ "cord"),
+    cytokine = recode(cytokine, !!!cytokine_label_nolog_t)) %>%
+  select(cytokine, matrix, geomean, geosd) %>%  #, min, med, max) %>%
+  filter(matrix != "cord") %>%  
+  gt(groupname_col = "cytokine", rowname_col = "matrix") %>%
+  cols_label(
+    cytokine = "Cytokine",
+    geomean = "Geometric mean",
+    geosd= "Geometric SD",
+    #min = "Minimum",
+    #med = "Median",
+    #max = "Maximum",
+    matrix = "Matrix") %>%
+  gt_theme_nytimes() %>%
+  tab_style(
+    style = cell_text(color = "gray20"), 
+    locations = cells_column_labels()     
+  )
+
+
+# BDEs - see Kaegan's code 
+bde_names <- c("bde_47_m", "bde_99_m", "bde_100_m", "bde_153_m", "bde_47_p", "bde_99_p", "bde_100_p", "bde_153_p")
+stress_names <- c("sle.cat", "social.support.cat", "job.strain", "employed", "pss.4.cat", "individual.predicted")
+
+write.csv(woc_lca_tidysem %>% 
+            #woc_imp_mice %>%
+            dplyr::select(all_of(bde_names), all_of(stress_names)) %>%
+            pivot_longer(cols = all_of(stress_names), names_to = "stress_var", values_to = "stress_group") %>%
+            pivot_longer(cols = all_of(bde_names), names_to = "bde", values_to = "value") %>%
+            group_by(stress_var, stress_group, bde) %>%
+            summarise(
+              geomean = round(exp(mean(log(value), na.rm = TRUE)), 2),
+              geosd   = round(exp(sd(log(value), na.rm = TRUE)), 2)) %>%
+            mutate(matrix = case_when(
+              str_detect(bde, "_m$") ~ "maternal",
+              str_detect(bde, "_p$") ~ "placental")) %>%
+            mutate(
+              #stress_group = recode(stress_group,
+              #                            "1" = "low",
+              #                            "2" = "high"),
+              bde = recode(bde, !!!bde_label_nolog_t)) %>%
+            mutate(mean_sd = paste0(geomean, " (", geosd, ")")) %>%
+            dplyr::select(stress_var, stress_group, bde, matrix, mean_sd) %>%
+            pivot_wider(names_from = c("stress_group", "stress_var"), values_from = mean_sd), 
+          file = "Table2_tidysem.csv")
+
+# range 
+woc_lca_tidysem %>% 
+            dplyr::select(all_of(bde_names), all_of(stress_names)) %>%
+            pivot_longer(cols = all_of(stress_names), names_to = "stress_var", values_to = "stress_group") %>%
+            pivot_longer(cols = all_of(bde_names), names_to = "bde", values_to = "value") %>%
+            group_by(stress_var, stress_group, bde) %>%
+            summarise(
+             # geomean = round(exp(mean(log(value), na.rm = TRUE)), 2),
+             # geosd   = round(exp(sd(log(value), na.rm = TRUE)), 2), 
+              max = round((max(log(value), na.rm = TRUE)), 2), 
+              min = round((min(log(value), na.rm = TRUE)), 2)) %>%
+            mutate(matrix = case_when(
+              str_detect(bde, "_m$") ~ "maternal",
+              str_detect(bde, "_p$") ~ "placental")) %>%
+            mutate(
+              #stress_group = recode(stress_group,
+              #                            "1" = "low",
+              #                            "2" = "high"),
+              bde = recode(bde, !!!bde_label_nolog_t)) %>%
+            mutate(max_min = paste0(min, " - ", max)) %>%
+            dplyr::select(stress_var, stress_group, bde, matrix, max_min) %>%
+            pivot_wider(names_from = c("stress_group", "stress_var"), values_from = max_min) %>%   select(bde, matrix, starts_with("Class")) %>% View()
+
+# t.test for specific differences 
+# maternal pbdes by stress categories
+rbind.data.frame(
+  t.test(woc_lca_tidysem$bde_47_m_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy(), 
+  t.test(woc_lca_tidysem$bde_99_m_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy(), 
+  t.test(woc_lca_tidysem$bde_100_m_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy(), 
+  t.test(woc_lca_tidysem$bde_153_m_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy())
+
+# plc. pbdes by stress categories
+rbind.data.frame(
+  t.test(woc_lca_tidysem$bde_47_p_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy(), 
+  t.test(woc_lca_tidysem$bde_99_p_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy(), 
+  t.test(woc_lca_tidysem$bde_100_p_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy(), 
+  t.test(woc_lca_tidysem$bde_153_p_log ~ woc_lca_tidysem$individual.predicted) %>%  tidy())
+
+```
+
+
+## 4. Correlation matrix 
+```{r corr}
+
+#### correlation matrix #### 
+# low
+  df_filtered <- woc_lca %>%
+    filter(Class == "1") %>%
+    select(
+      IL.7_m_log, IFN.Alpha_m_log, TNF.Alpha_m_log, TNF.RI_m_log, 
+      IFN.Gamma_m_log, IL.4_m_log, IL.6_m_log, IL.8_m_log, CCL2_m_log, 
+      CCL3_m_log, CCL4_m_log, CXCL9_m_log, CXCL10_m_log, CCL17_m_log, 
+      CCL22_m_log, IL.2_p_log, IL.12_p_log, IFN.Alpha_p_log, TNF.Alpha_p_log, TNF.RI_p_log, IL.1Beta_p_log, 
+      IL.10_p_log, IL.4_p_log, IL.6_p_log, IL.28A_p_log, IL.8_p_log, CCL2_p_log, CCL3_p_log, CCL4_p_log, CXCL10_p_log,
+      CCL22_p_log, 
+      bde_47_m_log, bde_99_m_log, bde_100_m_log, bde_153_m_log,
+      bde_47_p_log, bde_99_p_log, bde_100_p_log, bde_153_p_log
+    )
+  
+  # # Rename columns with unique names
+  colnames(df_filtered)<- str_remove(colnames(df_filtered), "_log")
+  colnames(df_filtered) <- str_replace_all(colnames(df_filtered), pattern = "bde", replacement = "BDE" )
+  colnames(df_filtered) <- str_remove_all(colnames(df_filtered), "\\.")
+
+  #plot_correlation(df_filtered)
+  
+ggcorrplot::ggcorrplot(as.matrix(round(cor(df_filtered %>% select(-IL12_p, -IL1Beta_p,-IFNAlpha_p) , # remove well detected cytokines
+                                           method = "spearman"), 1)), 
+                       # method = "circle", 
+                       hc.order = F, 
+                       type = "lower", 
+                       outline.color = "white", 
+                       ggtheme = ggplot2::theme_minimal() + 
+                         theme(
+                           plot.margin = ggplot2::margin(t = 0, r = 1, b = 0, l = 1),
+                           axis.text = element_text(angle = 0)),
+                       colors = c("#6D9EC1", "white", "#E46726"), 
+                       lab_size = 2, 
+                       lab = F, tl.cex = 8)
+
+ggsave("tidysem_class1.pdf", width = 8, height = 8, units = "in")
+
+# high
+df_filtered <- woc_lca %>%
+  filter(Class == "2") %>%
+  select(
+    IL.7_m_log, IFN.Alpha_m_log, TNF.Alpha_m_log, TNF.RI_m_log, 
+    IFN.Gamma_m_log, IL.4_m_log, IL.6_m_log, IL.8_m_log, CCL2_m_log, 
+    CCL3_m_log, CCL4_m_log, CXCL9_m_log, CXCL10_m_log, CCL17_m_log, 
+    CCL22_m_log, IL.2_p_log, IL.12_p_log, IFN.Alpha_p_log, TNF.Alpha_p_log, TNF.RI_p_log, IL.1Beta_p_log, 
+    IL.10_p_log, IL.4_p_log, IL.6_p_log, IL.28A_p_log, IL.8_p_log, CCL2_p_log, CCL3_p_log, CCL4_p_log, CXCL10_p_log,
+    CCL22_p_log, 
+    bde_47_m_log, bde_99_m_log, bde_100_m_log, bde_153_m_log,
+    bde_47_p_log, bde_99_p_log, bde_100_p_log, bde_153_p_log
+  )
+
+# # Rename columns with unique names
+colnames(df_filtered)<- str_remove(colnames(df_filtered), "_log")
+colnames(df_filtered) <- str_replace_all(colnames(df_filtered), pattern = "bde", replacement = "BDE" )
+colnames(df_filtered) <- str_remove_all(colnames(df_filtered), "\\.")
+
+#plot_correlation(df_filtered)
+
+ggcorrplot::ggcorrplot(as.matrix(round(cor(df_filtered %>% select(-IL12_p, -IL1Beta_p,-IFNAlpha_p) , # remove well detected cytokines
+                                           method = "spearman"), 1)), 
+                       # method = "circle", 
+                       hc.order = F, 
+                       type = "lower", 
+                       outline.color = "white", 
+                       ggtheme = ggplot2::theme_minimal() + 
+                         theme(
+                           plot.margin = ggplot2::margin(t = 0, r = 1, b = 0, l = 1),
+                           axis.text = element_text(angle = 0)),
+                       colors = c("#6D9EC1", "white", "#E46726"), 
+                       lab_size = 2, 
+                       lab = F, tl.cex = 8)
+
+ggsave("tidysem_class2.pdf", width = 8, height = 8, units = "in")
+
+```
+
+## 5. Models 
+```{r models}
+woc_lca <- woc_lca_tidysem
+woc_lca<- woc_lca %>%  mutate(Class = if_else(individual.predicted == "Class 1, low stress", 1, 2))
+
+# run individual 
+outcomes_m <- c("IL.6_m_log", 
+              "IL.8_m_log", 
+              "IL.7_m_log", 
+              "CXCL10_m_log",
+              "CCL2_m_log", 
+              "IFN.Gamma_m_log",
+              "CCL3_m_log", 
+              "CCL22_m_log", 
+              "CCL4_m_log", 
+              "IL.4_m_log", 
+              "CXCL9_m_log", 
+              "IFN.Alpha_m_log", 
+              "TNF.Alpha_m_log", 
+              "TNF.RI_m_log", 
+              "CCL17_m_log")
+
+outcomes_p <-  c("IL.28A_p_log", 
+               "IL.6_p_log", 
+               "IL.8_p_log", 
+               "CXCL10_p_log", 
+               "IL.10_p_log",  
+               "CCL2_p_log", 
+               "CCL3_p_log", 
+               "CCL22_p_log", 
+               "CCL4_p_log", 
+               "IL.4_p_log", 
+               "IL.2_p_log", 
+               #"IFN.Alpha_p_log", 
+               "TNF.Alpha_p_log", 
+               "TNF.RI_p_log")
+               #"IL.12_p_log", 
+               #"IL.1Beta_p_log")
+
+# mat
+mat.47.class <- lapply(outcomes_m, function(x){lm(substitute(i ~ bde_47_m_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                                 list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+mat.99.class <- lapply(outcomes_m, function(x){lm(substitute(i ~ bde_99_m_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                         list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+mat.100.class <- lapply(outcomes_m, function(x){lm(substitute(i ~ bde_100_m_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                         list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+mat.153.class <- lapply(outcomes_m, function(x){lm(substitute(i ~ bde_153_m_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                         list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+# plc
+plc.47.class <- lapply(outcomes_p, function(x){lm(substitute(i ~ bde_47_p_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                              list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+plc.99.class <- lapply(outcomes_p, function(x){lm(substitute(i ~ bde_99_p_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                              list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+plc.100.class <- lapply(outcomes_p, function(x){lm(substitute(i ~ bde_100_p_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                               list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+plc.153.class <- lapply(outcomes_p, function(x){lm(substitute(i ~ bde_153_p_log*Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure, 
+                                                               list(i = as.name(x))), data = woc_lca %>%  mutate(Class = as.character(Class)))})
+
+# combine res and save results
+estimates <- rbind.data.frame( 
+  as.data.frame(lapply(c(mat.47.class, mat.99.class, mat.100.class, mat.153.class
+                     # plc.47.class, plc.99.class, plc.100.class, plc.153.class
+), function(model) {
+  cbind.data.frame(tidy(model, conf.int = TRUE), nobs(model))}) %>%
+  bind_rows(.id = "model") %>%
+  filter(str_detect(term, "bde")) %>%  
+  mutate(outcome = rep(rep(outcomes_m, each = 2), 4) )%>%    
+         #sex = rep(c("Overall", "Female", "Male"), each = 10)) %>% 
+  mutate_at(.vars = 4:8, ~round(.,2))), 
+
+as.data.frame(lapply(c(#mat.47.class, mat.99.class, mat.100.class, mat.153.class
+          plc.47.class, plc.99.class, plc.100.class, plc.153.class
+), function(model) {
+  cbind.data.frame(tidy(model, conf.int = TRUE), nobs(model))}) %>%
+  bind_rows(.id = "model") %>%
+  filter(str_detect(term, "bde")) %>%  
+  mutate(outcome = rep(rep(outcomes_p, each = 2), 4) )%>%    
+  #sex = rep(c("Overall", "Female", "Male"), each = 10)) %>% 
+  mutate_at(.vars = 4:8, ~round(.,2)))) 
+
+write.csv(estimates, file = "res_stress_lca_interaction_lm.csv")
+
+# stratified models 
+
+# interaction linear models - maternal 
+reg_em_strata <- function(data, outcomes, predictors, stress, level) {
+  models <- list()
+  for (i in seq_along(outcomes)) {
+    for (j in seq_along(predictors)) {
+      model_name <- paste0(outcomes[i], " ~ ", predictors[j] , "+ mat_age + mat_educ + bmi.procedure + gest.age.procedure")
+      formula <- as.formula(model_name)
+      model <- lm(formula = formula, data = data)
+      n <- nobs(model)
+      models[[model_name]] <- tidy(model, conf.int = TRUE) %>%
+      mutate(outcome = outcomes[i], n = n)
+    }
+  }
+  return(bind_rows(models))
+}
+
+predictors <- c("bde_47_m_log",
+                "bde_99_m_log", 
+                "bde_100_m_log", 
+                "bde_153_m_log")
+outcomes <- c("IL.6_m_log", 
+              "IL.8_m_log", 
+              "IL.7_m_log", 
+              "CXCL10_m_log",
+              "CCL2_m_log", 
+              "IFN.Gamma_m_log",
+              "CCL3_m_log", 
+              "CCL22_m_log", 
+              "CCL4_m_log", 
+              "IL.4_m_log", 
+              "CXCL9_m_log", 
+              "IFN.Alpha_m_log", 
+              "TNF.Alpha_m_log", 
+              "TNF.RI_m_log", 
+              "CCL17_m_log")
+
+lm_interact_job_class_1 <- reg_em_strata( data =  filter(woc_lca, Class == "1"),  outcomes = outcomes, predictors = predictors, stress = "Class", level = "1")  
+lm_interact_job_class_2 <- reg_em_strata( data =  filter(woc_lca, Class == "2"),  outcomes = outcomes, predictors = predictors, stress = "Class", level = "2")  
+
+
+# interaction linear reg = placental
+predictors <- c("bde_47_p_log",
+                "bde_99_p_log", 
+                "bde_100_p_log", 
+                "bde_153_p_log")
+outcomes <-  c("IL.28A_p_log", 
+                 "IL.6_p_log", 
+                 "IL.8_p_log", 
+                 "CXCL10_p_log", 
+                 "IL.10_p_log",  
+                 "CCL2_p_log", 
+                 "CCL3_p_log", 
+                 "CCL22_p_log", 
+                 "CCL4_p_log", 
+                 "IL.4_p_log", 
+                 "IL.2_p_log", 
+                 #"IFN.Alpha_p_log", 
+                 "TNF.Alpha_p_log", 
+                 "TNF.RI_p_log")
+#"IL.12_p_log", 
+#"IL.1Beta_p_log")
+
+pclm_interact_job_class_1 <- reg_em_strata( data =  filter(woc_lca, Class == "1"),  outcomes = outcomes, predictors = predictors, stress = "Class", level = "1")  
+pclm_interact_job_class_2 <- reg_em_strata( data =  filter(woc_lca, Class == "2"),  outcomes = outcomes, predictors = predictors, stress = "Class", level = "2")  
+
+
+# join into a table 
+res_lm_lca_interact_strat_mat_plc<- rbind.data.frame(
+  pclm_interact_job_class_1%>%  mutate(biomatrix = "Placenta", stress = "Class", level = "1"), 
+  pclm_interact_job_class_2%>%  mutate(biomatrix = "Placenta", stress = "Class", level = "2"), 
+  
+  lm_interact_job_class_1%>%  mutate(biomatrix = "Maternal serum", stress = "Class", level = "1"), 
+  lm_interact_job_class_2%>%  mutate(biomatrix = "Maternal serum", stress = "Class", level = "2")) %>% 
+  filter(str_detect(term, "bde_47|bde_99|bde_100|bde_153"))
+
+# check all models were run - table(res_lm_lca_interact_strat_mat_plc$biomatrix) should be length of outcome*lenght of predictors*3 stressors = 15*4*3 or 16*4*3 . all good:)
+
+
+# Save results
+save(res_lm_lca_interact_strat_mat_plc, estimates, file = "res_lm_tidylca_stress_emm_strata.Rda") # for tidysem(lca)
+     #file = "res_lm_lca_stress_emm_strata.Rda") # this for mice imputed
+
+# summarize res in manuscript 
+#interaction term p val
+ View(estimates %>%  filter(p.value<0.05, str_detect(term, ":Class2")))
+# View(estimates %>%  filter(p.value<0.05, str_detect(term, ":sle.cat")))
+# View(estimates %>%  filter(p.value<0.05, str_detect(term, ":social.support.cat")))
+
+
+
+# export results for suppl. table 
+estimates_neat <- estimates %>% dplyr::select(term, p.value, outcome) %>%  mutate(biomatrix = if_else(str_detect(outcome, "_m_"), "Maternal Serum", "Placenta")) %>%  
+  mutate(across(where(is.numeric), round, 2))  %>%  
+  mutate(stress = str_trim(str_split_i(term, ":", i = 2), side = "both" ), 
+        # level = str_trim(str_extract(stress, "1|2"), side = "both")
+         ) %>%  
+  filter(!is.na(stress)) %>%  
+  mutate(term = str_split_i(term, ":", i = 1))
+
+
+res_lm_lca_interact_strat_mat_plc_neat <- res_lm_lca_interact_strat_mat_plc %>% dplyr::select(term, estimate, conf.low, conf.high, outcome, biomatrix, -stress, level) %>%  
+  mutate(across(where(is.numeric), round, 2))  %>%  
+  mutate(ci = paste0("(", conf.low, ", ", conf.high, ")"))
+
+all_res_lca_lm_neat <- res_lm_lca_interact_strat_mat_plc_neat %>%  
+                           left_join(estimates_neat, 
+                                     by = c("term", "outcome"
+                                            #"level"
+                                            ))
+
+all_res_lca_lm_neat<- all_res_lca_lm_neat %>% 
+  mutate(term = str_remove(term, "_m_|_p_"), 
+         outcome = str_remove(outcome, "_m_|_p_")) %>% 
+  dplyr::select(-conf.high, -conf.low, -biomatrix.y, -stress) %>%  
+  mutate(est_ci_p = paste0(estimate, ";", ci, ";", p.value)) %>%  
+ dplyr::select(-estimate, -ci, -p.value) %>%
+  pivot_wider(
+    names_from = c(term, level),
+    values_from = est_ci_p
+  )
+write.csv(all_res_lca_lm_neat, file = "all_res_tidylca_lm_neat.csv") # tidy lpa 
+          #file = "all_res_lca_lm_neat.csv") # mice imputed answers
+
+
+
+# plot!
+# neat cytokine names
+
+cytokine_label_clean <- c(
+  "IL.28A_p_log"    = "IL-28A",
+  "IL.6_p_log"      = "IL-6",
+  "IL.8_p_log"      = "IL-8",
+  "CXCL10_p_log"    = "CXCL-10",
+  "IL.10_p_log"     = "IL-10",
+  "CCL2_p_log"      = "CCL-2",
+  "CCL3_p_log"      = "CCL-3",
+  "CCL22_p_log"     = "CCL-22",
+  "CCL4_p_log"      = "CCL-4",
+  "IL.4_p_log"      = "IL-4",
+  "IL.2_p_log"      = "IL-2",
+  "TNF.Alpha_p_log" = "TNF-\u03b1",
+  "TNF.RI_p_log"    = "TNF-RI",
+  "IL.6_m_log"      = "IL-6",
+  "IL.8_m_log"      = "IL-8",
+  "IL.7_m_log"      = "IL-7",
+  "CXCL10_m_log"    = "CXCL-10",
+  "CCL2_m_log"      = "CCL-2",
+  "IFN.Gamma_m_log" = "IFN-\u03b3",
+  "CCL3_m_log"      = "CCL-3",
+  "CCL22_m_log"     = "CCL-22",
+  "CCL4_m_log"      = "CCL-4",
+  "IL.4_m_log"      = "IL-4",
+  "CXCL9_m_log"     = "CXCL-9",
+  "IFN.Alpha_m_log" = "IFN-\u03b1",
+  "TNF.Alpha_m_log" = "TNF-\u03b1",
+  "TNF.RI_m_log"    = "TNF-RI",
+  "CCL17_m_log"     = "CCL-17"
+)
+
+plot <- res_lm_lca_interact_strat_mat_plc_neat %>% 
+  left_join(estimates_neat, 
+            by = c("term", "outcome")) %>%
+  mutate(
+    outcome = recode(outcome, !!!cytokine_label_clean),
+    outcome = factor(outcome, levels = rev(c(
+      "IL-2", "IL-7", "IL-12", "IFN-\u03b1", "TNF-\u03b1", "TNF-RI", "IFN-\u03b3",
+      "IL1-\u03b2", "IL-10", "IL-4", "IL-6", "IL-28A", "IL-8", "CCL-2", "CCL-3",
+      "CCL-4", "CXCL-9", "CXCL-10", "CCL-17", "CCL-22"
+    )))
+  )
+
+plot$outcome <- factor(plot$outcome, levels = rev(c("IL-2", "IL-7", "IL-12", "IFN-α", "TNF-α", "TNF-RI", "IFN-γ", "IL1-β", "IL-10",  "IL-4", "IL-6", "IL-28A", "IL-8", "CCL-2", "CCL-3", "CCL-4", "CXCL-9", "CXCL-10", "CCL-17", "CCL-22")))
+
+# add cytokine groupname
+plot <- plot  %>%  mutate(group_name = case_when( str_detect(outcome, "(IL-8)|(CCL-2)|(CCL-3)|(CCL-4)|(CCL-17)|(CCL-22)|(CXCL-8)|(CXCL-9)|(CXCL-10)") == T ~ "Chemokines",
+                                                                      str_detect(outcome, "(IL1-β)|(IL-2)|(IL-5)|(IL-7)|(IL-12)|(IL-17)|(IL-23)|(IFN-α)|(IFN-γ)|(TNF-α)|(TNF-RI)") == T ~ "Pro-inflammatory",
+                                                                      str_detect(outcome, "(IL-4)|(IL-10)") == T ~ "Anti-inflammatory",
+                                                                      str_detect(outcome, "(IL-6)|(IFN-β)") == T ~ "Pro- & anti-inflammatory",
+                                                                      str_detect(outcome, "(IL-28A)|(IL-28B)") == T ~ "Immunomodulatory cytokine (antivirial)",
+                                                                      str_detect(outcome, "CRH") == T ~ "Hormone",
+                                                                      TRUE ~ "WTF"))
+
+plot$group_name <- fct_relevel(plot$group_name, "Chemokines", "Anti-inflammatory", "Pro-inflammatory", 
+                               "Pro- & anti-inflammatory")
+# Create a background layer with alternating grey rectangles
+background_df <- plot %>%
+  mutate(term = str_remove(term, "_m_|_p_"), 
+         term = str_to_upper(str_remove_all(term, "_|(log)")), 
+         outcome = recode(outcome, !!!cytokine_label_log_t), 
+         group = str_extract(outcome, "^[^-]+")) %>%
+  distinct(outcome, group_name) %>%
+  arrange(outcome, group_name) %>%
+  mutate(ymin = row_number() - 0.5,
+         ymax = row_number() + 0.5,
+         fill = rep(c("grey90", "white"), length.out = n()) , 
+         fill = case_when(outcome == "IL-28A"~ "white",
+                          outcome == "IL-6" ~ "grey90",
+                          T ~ fill)) # manually correct some
+
+background_df <- background_df %>%  mutate(outcome = factor(outcome, levels = background_df$outcome))
+
+plot_clean <-plot %>%  
+         mutate(term = str_remove(term, "_m_|_p_"), 
+                term = str_to_upper(str_remove_all(term, "_|(log)")), 
+                outcome = recode(outcome, !!!cytokine_label_log_t), 
+               group = str_extract(outcome, "^[^-]+"))%>%
+  mutate(stress = recode(as.character(level),
+                          "1" = "Low Stress",
+                          "2" = "High Stress"))
+
+
+       aes(x = estimate, xmin = conf.low, xmax = conf.high,
+           y = outcome, # factor(term, levels = c("lnTCPY", "ln3PBA", "lnCOT", "ln3OHCOT","THC_binaryDetect")), 
+           color = level,  shape = level, 
+           inherit.aes = FALSE,
+          fill = "grey90",
+          alpha = 0.5))  +
+  
+  geom_tile(data = background_df %>% filter(outcome != "IL-12" , outcome != "IL1-β" ),
+            aes(y = outcome, x = 0, fill = fill),
+            width = Inf, height = 1, inherit.aes = FALSE, alpha = 0.5) + 
+  scale_fill_identity() +
+  geom_vline(xintercept = 0, color = "grey25", linetype = "dashed", alpha = 3) +
+  geom_pointrange(aes(xmin = conf.low , xmax = conf.high ),
+                  linewidth = 1.2,  position = position_dodge(width = 1)) +
+  geom_point(size = 2, position = position_dodge(width = 1)) +
+  xlab("Effect Estimate (95% CI)") +
+  ylab(" ") + 
+  labs(color = "type")+ 
+  scale_color_manual(values = c("deepskyblue3", "darkblue"),
+                     #labels = c("Low", "High"),
+                     name = "Class") +
+  scale_shape_manual(values = c(16, 17),
+                   #  labels = c("Low", "High"),
+                     name = "Class") +
+  facet_grid(group_name ~ biomatrix.x , scales = "free",space = "free_y")+
+  theme(legend.position="top", 
+                    strip.text.x = element_text(size =14),                  
+                    strip.text.y = element_text(size =10), 
+
+                    legend.text = element_text(size = 14), 
+                    axis.title.x = element_text(size=14, face="bold", colour = "black"),
+                    axis.text.x = element_text(size=14, colour = "black"),
+                    axis.text.y = element_text(size=14,# face="bold", 
+                                               colour = "black"))  + #  For bold axis, include the following in theme(): axis.title.x = element_text(size=9, face="bold", colour = "black"), axis.text.y = element_text(size=9, face="bold", colour = "black")
+  labs(x = "Beta (95% Confidence Interval)", y = "", shape = "", alpha = "", fill = "") 
+
+# 8.5/9 x 6 landscape 
+
+```
+
+
+```{r}
+## qgcomp 
+mice.qgcomp.emm<- function(matrix, stressor){
+  if(matrix == "maternal"){
+    # Define outcomes
+    outcomes <- c("IL.6_m_log", 
+                  "IL.8_m_log", 
+                  "IL.7_m_log", 
+                  "CXCL10_m_log",
+                  "CCL2_m_log", 
+                  "IFN.Gamma_m_log",
+                  "CCL3_m_log", 
+                  "CCL22_m_log", 
+                  "CCL4_m_log", 
+                  "IL.4_m_log", 
+                  "CXCL9_m_log", 
+                  "IFN.Alpha_m_log", 
+                  "TNF.Alpha_m_log", 
+                  "TNF.RI_m_log", 
+                  "CCL17_m_log")
+    
+    # Define exposure
+    exposures <- c("bde_47_m_log", "bde_99_m_log","bde_100_m_log", "bde_153_m_log")
+    
+    all_results<- list()
+    
+    for (outcome in outcomes) {
+      # formula 
+      current_formula <- as.formula(paste0(outcome, " ~ bde_47_m_log + bde_99_m_log + bde_100_m_log + bde_153_m_log +
+                                                 Class + mat_age + mat_educ + bmi.procedure + gest.age.procedure"))
+      
+      qg_models<- qgcomp.emm.noboot( f = current_formula,
+                                       expnms = c("bde_47_m_log", "bde_99_m_log", "bde_100_m_log", "bde_153_m_log"),
+                                       dat = woc_lca %>% dplyr::select(outcomes, exposures,  Class , mat_age, mat_educ, bmi.procedure, gest.age.procedure) %>%  mutate(Class = as.factor(Class)), 
+                                       family = gaussian(),
+                                       emmvar = "Class")
+      
+      all_results[[outcome]] <- qg_models
+    } } 
+  
+  if(matrix == "placenta"){
+    # Define outcomes
+    # outcomes <- c("IL.2_p_log", "IL.12_p_log", "IFN.Alpha_p_log", "TNF.Alpha_p_log", "TNF.RI_p_log",
+    #               "IL.1Beta_p_log", "IL.10_p_log", "IL.4_p_log", "IL.6_p_log", "IL.28A_p_log", 
+    #               "IL.8_p_log", "CCL2_p_log", "CCL3_p_log", "CCL4_p_log", "CXCL10_p_log", "CCL22_p_log")
+    
+    outcomes <-  c("IL.28A_p_log", 
+                   "IL.6_p_log", 
+                   "IL.8_p_log", 
+                   "CXCL10_p_log", 
+                   "IL.10_p_log",  
+                   "CCL2_p_log", 
+                   "CCL3_p_log", 
+                   "CCL22_p_log", 
+                   "CCL4_p_log", 
+                   "IL.4_p_log", 
+                   "IL.2_p_log", 
+                   #"IFN.Alpha_p_log", 
+                   "TNF.Alpha_p_log", 
+                   "TNF.RI_p_log")
+    #"IL.12_p_log", 
+    #"IL.1Beta_p_log")
+    
+    
+    # Define exposure
+    exposures <- c("bde_47_p_log", "bde_99_p_log","bde_100_p_log", "bde_153_p_log")
+    
+    all_results<- list()
+    
+    for (outcome in outcomes) {
+      # formula 
+      current_formula <- as.formula(paste0(outcome, " ~ bde_47_p_log + bde_99_p_log + bde_100_p_log + bde_153_p_log  + 
+        Class + 
+        mat_age + mat_educ + bmi.procedure + gest.age.procedure"))
+      
+      
+      qg_models<- qgcomp.emm.noboot(
+          f = current_formula,
+          expnms =  c("bde_47_p_log", "bde_99_p_log","bde_100_p_log", "bde_153_p_log"),
+          dat = woc_lca %>% dplyr::select(outcomes, exposures,  Class , mat_age, mat_educ, bmi.procedure, gest.age.procedure) %>% mutate(Class = as.factor(Class)), 
+          family = gaussian(),
+          emmvar = "Class") 
+      
+      all_results[[outcome]] <- qg_models
+    } } 
+  
+    # Step 1: Extract estimates and standard errors from each model
+  strat_effects1 <- lapply(all_results, function(x) getstrateffects(x, emmval = "1")) # map(all_results, ~ getstrateffects(.x, emmval = "1"))
+  strat_effects0 <- lapply(all_results, function(x) getstrateffects(x, emmval = "2"))#map(all_results, ~ getstrateffects(.x, emmval = "2"))
+  p <- lapply(all_results, function(x) as.data.frame(x$pval)[4,1])
+  
+  strat_weight1 <- lapply(all_results, function(x) getstratweights(x, emmval = "1")) # map(all_results, ~ getstratweights(.x, emmval = "1"))
+  strat_weight0 <- lapply(all_results, function(x) getstratweights(x, emmval = "2"))# map(all_results, ~ getstratweights(.x, emmval = "2"))
+  
+  # Step 2: Combine into one data frame with imputation index
+  eff_est<- 
+    data.frame(
+      estimate_1 = map_dbl(strat_effects1, ~ .x[["eff"]]), # psi  
+      lcl_1 = map_dbl(strat_effects1, ~ .x[["ci"]][,1]), # lcl
+      ucl_1 = map_dbl(strat_effects1, ~ .x[["ci"]][,2]), # ucl 
+      std.error_1 = map_dbl(strat_effects1, ~ .x[["se"]]), # se 
+      p_value = p,
+      
+      estimate_0 = map_dbl(strat_effects0, ~ .x[["eff"]]),
+      lcl_0 = map_dbl(strat_effects0, ~ .x[["ci"]][,1]),
+      ucl_0 = map_dbl(strat_effects0, ~ .x[["ci"]][,2]),
+      std.error_0 = map_dbl(strat_effects0, ~ .x[["se"]])
+    ) %>%  rownames_to_column(var = "outcome")
+  
+  eff_est<- eff_est%>%  mutate(outcome= str_remove(paste0("ln", outcome), "(_log)"))
+
+
+  # Step 2: Combine into one data frame with imputation index
+  if(matrix == "maternal"){
+    strat_weight_1 <- map_dfr(seq_along(strat_weight1), function(i) {
+      mod <- strat_weight1[[i]]
+
+      # Combine positive and negative weights
+      weights <- c(mod[["pos.weights"]], -mod[["neg.weights"]])
+
+      # Convert to data frame and select components
+      df <- data.frame(t(weights))
+      df <- df[, c( "bde_47_m_log" ,"bde_99_m_log", "bde_100_m_log", "bde_153_m_log")]
+
+      #  df$imp <- i  # Add imputation index
+      return(df)
+    })
+    strat_weight_0 <- map_dfr(seq_along(strat_weight0), function(i) {
+      mod <- strat_weight0[[i]]
+
+      # Combine positive and negative weights
+      weights <- c(mod[["pos.weights"]], -mod[["neg.weights"]])
+
+      # Convert to data frame and select components
+      df <- data.frame(t(weights))
+      df <- df[, c( "bde_47_m_log" ,"bde_99_m_log", "bde_100_m_log", "bde_153_m_log")]
+
+      # df$imp <- i  # Add imputation index
+      return(df)
+    })}
+
+  if(matrix == "placenta"){
+    strat_weight_1 <- map_dfr(seq_along(strat_weight1), function(i) {
+      mod <- strat_weight1[[i]]
+
+      # Combine positive and negative weights
+      weights <- c(mod[["pos.weights"]], -mod[["neg.weights"]])
+
+      # Convert to data frame and select components
+      df <- data.frame(t(weights))
+      df <- df[, c( "bde_47_p_log" ,"bde_99_p_log", "bde_100_p_log", "bde_153_p_log")]
+
+      #  df$imp <- i  # Add imputation index
+      return(df)
+    })
+    strat_weight_0 <- map_dfr(seq_along(strat_weight0), function(i) {
+      mod <- strat_weight0[[i]]
+
+      # Combine positive and negative weights
+      weights <- c(mod[["pos.weights"]], -mod[["neg.weights"]])
+
+      # Convert to data frame and select components
+      df <- data.frame(t(weights))
+      df <- df[, c( "bde_47_p_log" ,"bde_99_p_log", "bde_100_p_log", "bde_153_p_log")]
+
+      # df$imp <- i  # Add imputation index
+      return(df)
+    })}
+
+  # add model names and imp
+  names <- map_dfr(strat_weight1, ~ tibble(model_name = names(.x)), .id = "outcome")
+  names <- unique(names$outcome)
+
+  # Step 3: Pool using Rubin's rules
+  if(matrix == "maternal"){
+    pooled_weights <- rbind.data.frame(cbind.data.frame(strat_weight_1, names) %>%  mutate(strata= 1),
+                                       cbind.data.frame(strat_weight_0, names) %>%  mutate(strata= 2))
+
+  }
+
+  if(matrix == "placenta"){
+    pooled_weights <- rbind.data.frame(cbind.data.frame(strat_weight_1, names) %>%  mutate(strata= 1),
+                                       cbind.data.frame(strat_weight_0, names) %>%  mutate(strata= 2))
+  }
+
+  save(all_results, qg_models, eff_est, #pooled_results,
+       strat_weight_1, strat_weight_0, pooled_weights,
+       file = paste0("res_lca_cytokine_", matrix, "_", stressor, ".Rda"))
+}
+
+# run it!
+mice.qgcomp.emm(matrix = "maternal", stressor = "Class")
+mice.qgcomp.emm(matrix = "placenta", stressor = "Class")
+# oct 6, 2025 - overwrote the mice lca with tidy sem lca results
+# oct 10 2025 - new resutls with tidy sem, and jobstrain and eployed collapsed into 1 
+# oct 12, 2025- well detected cytokines changed
+
+# load sle in maternal matrix
+temp_env <- new.env()
+load("res_lca_cytokine_maternal_Class.Rda", envir = temp_env)
+lca_res <- temp_env$eff_est %>%  mutate(matrix = "Maternal Serum")
+lca_weight <- rbind.data.frame(temp_env$strat_weight_0 %>% mutate(strat = "2"), 
+                               temp_env$strat_weight_1%>% mutate(strat = "1"))%>%
+  mutate(matrix = "Maternal Serum")
+# extract and save weights - csv 
+write.csv(temp_env$pooled_weights %>%  
+            mutate(strata_neat = ifelse(strata == 1 ,
+                          "Class 1, low stress", # when job strain and emp separate, class 1 - low stress overall
+                          "Class 2, high stress")) %>%  
+            mutate(across(1:4, ~round(.,2))), file = "res_lca_cytokine_maternal_Class_weights.csv")
+rm(temp_env)
+
+
+# load job strain in placenta matrix
+temp_env <- new.env()
+load("res_lca_cytokine_placenta_Class.Rda", envir = temp_env)
+lca_p_res <- temp_env$eff_est %>%  mutate(matrix = "Placenta")
+lca_p_weight <- rbind.data.frame(temp_env$strat_weight_0 %>% mutate(strat = "2"), 
+                                 temp_env$strat_weight_1%>% mutate(strat = "1"))%>% mutate(matrix = "Placenta")
+# extract and save weights - csv 
+write.csv(temp_env$pooled_weights %>%  
+            mutate(strata_neat = ifelse(strata == 1 ,
+                                        "Class 1, low stress", # when job strain and emp separate, class 1 - low stress overall
+                                        "Class 2, high stress")) %>% 
+          mutate(across(1:4, ~round(.,2))), file = "res_lca_cytokine_placenta_Class_weights.csv")
+rm(temp_env)
+
+
+# merge all effect estimates
+# run the first two lines 17 -119
+qgcomp_sle <- bind_rows(lca_res, lca_p_res) %>%
+  mutate(outcome = recode(outcome, !!!cytokine_label_log_t))
+
+
+qgcomp_sle$outcome <- factor(qgcomp_sle$outcome, levels = rev(c("IL-2", "IL-7", "IL-12", "IFN-α", "TNF-α", "TNF-RI", "IFN-γ", "IL1-β", "IL-10",  "IL-4", "IL-6", "IL-28A", "IL-8", "CCL-2", "CCL-3", "CCL-4", "CXCL-9", "CXCL-10", "CCL-17", "CCL-22")))
+
+# table
+qgcomp_sle_1 <- qgcomp_sle%>% mutate(outcome = recode(outcome, !!!cytokine_label_log_t)
+                      # strata = recode(strata,
+                      #                 "2" = "2",
+                      #                 "1" = "1")
+                      ) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  dplyr::select(outcome, ends_with("_1"), matrix) %>% mutate(strat = "1")
+colnames(qgcomp_sle_1) <- str_remove(colnames(qgcomp_sle_1), "_1")
+
+qgcomp_sle_0 <- qgcomp_sle%>% mutate(outcome = recode(outcome, !!!cytokine_label_log_t)
+                                     # strata = recode(strata,
+                                     #                 "2" = "2",
+                                     #                 "1" = "1")
+) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  dplyr::select(outcome, ends_with("_0"), matrix) %>% mutate(strat = "2")
+colnames(qgcomp_sle_0) <- str_remove(colnames(qgcomp_sle_0), "_0")
+
+rbind.data.frame(qgcomp_sle_0, qgcomp_sle_1) %>%  
+  mutate(beta_ci = paste0(estimate, " (", lcl, ", ", ucl, ")"))  %>%
+  dplyr::select(outcome, matrix, strat, beta_ci) %>%
+  pivot_wider(names_from = strat, values_from = beta_ci) %>%
+  gt(groupname_col = "outcome", rowname_col = "matrix") %>%
+  gt_theme_nytimes() %>%
+  tab_style(
+    style = cell_text(color = "gray20"),
+    locations = cells_column_labels()
+  )
+
+# neaten up data for figure 
+plot_lm_qgcomp_lca<- rbind.data.frame(qgcomp_sle_0 %>% dplyr::select(-std.error) %>%   mutate(term = "Mixture"), 
+                 qgcomp_sle_1 %>%  dplyr::select(-std.error) %>%  mutate(term = "Mixture"),
+                 plot %>%  dplyr::select(outcome, estimate, conf.low, conf.high, biomatrix.x, level, term) %>%  
+                   rename("lcl" = "conf.low" ,
+                          "ucl" = "conf.high" ,
+                          "matrix" = "biomatrix.x", 
+                          "strat" = "level"
+                          ))
+                   
+
+# join qgcomp and lm results 
+plot_lm_qgcomp_lca$outcome <- factor(plot_lm_qgcomp_lca$outcome, levels = rev(c("IL-2", "IL-7", "IL-12", "IFN-α", "TNF-α", "TNF-RI", "IFN-γ", "IL1-β", "IL-10",  "IL-4", "IL-6", "IL-28A", "IL-8", "CCL-2", "CCL-3", "CCL-4", "CXCL-9", "CXCL-10", "CCL-17", "CCL-22")))
+
+# add cytokine groupname
+plot_lm_qgcomp_lca <- plot_lm_qgcomp_lca  %>%  mutate(group_name = case_when( str_detect(outcome, "(IL-8)|(CCL-2)|(CCL-3)|(CCL-4)|(CCL-17)|(CCL-22)|(CXCL-8)|(CXCL-9)|(CXCL-10)") == T ~ "Chemokines",
+                                                  str_detect(outcome, "(IL1-β)|(IL-2)|(IL-5)|(IL-7)|(IL-12)|(IL-17)|(IL-23)|(IFN-α)|(IFN-γ)|(TNF-α)|(TNF-RI)") == T ~ "Pro-inflammatory",
+                                                  str_detect(outcome, "(IL-4)|(IL-10)") == T ~ "Anti-inflammatory",
+                                                  str_detect(outcome, "(IL-6)|(IFN-β)") == T ~ "Pro- & anti-inflammatory",
+                                                  str_detect(outcome, "(IL-28A)|(IL-28B)") == T ~ "Immunomodulatory cytokine (antivirial)",
+                                                  str_detect(outcome, "CRH") == T ~ "Hormone",
+                                                  TRUE ~ "WTF"))
+
+plot_lm_qgcomp_lca$group_name <- fct_relevel(plot_lm_qgcomp_lca$group_name, "Chemokines", "Anti-inflammatory", "Pro-inflammatory", 
+                               "Pro- & anti-inflammatory")
+
+
+ggplot(plot_lm_qgcomp_lca %>% 
+         mutate(term = str_remove(term, "_m_|_p_"), 
+                term = str_to_upper(str_remove_all(term, "_|(log)")), 
+                term = if_else(term == "MIXTURE", "Mixture", term), 
+                matrix = if_else(str_detect(matrix, "Maternal"), "Maternal serum", matrix)) 
+       %>%  filter(term == "Mixture", 
+                  outcome != "IL-12" , outcome != "IL1-β" ), 
+       aes(x = estimate, xmin = lcl, xmax = ucl,
+           y = outcome, 
+           color = strat,  shape = strat, 
+           inherit.aes = FALSE,
+           fill = "grey90",
+           alpha = 0.5))  +
+  geom_tile(data = background_df %>% filter(outcome != "IL-12" , outcome != "IL1-β" ) ,
+            aes(y = outcome, x = 0, fill = fill),
+            width = Inf, height = 1, inherit.aes = FALSE, alpha = 0.5) + 
+  
+  # geom_rect(data = background_df,
+  #           aes(ymin = ymin, ymax = ymax, xmin = -Inf, xmax = Inf, fill = fill),
+  #           inherit.aes = FALSE, alpha = 0.5) +
+  scale_fill_identity() +
+  
+  geom_vline(xintercept = 0, color = "grey25", linetype = "dashed", alpha = 3) +
+  geom_pointrange(aes(xmin = lcl , xmax = ucl ), linewidth = 1.2,  position = position_dodge(width = 1)) +
+  geom_point(size = 2.8, position = position_dodge(width = 1)) +
+  xlab("Effect Estimate (95% CI)") +
+  ylab(" ") + 
+  labs(color = "type")+ 
+  #ggthemes::scale_color_tableau(palette = "Tableau 20" ) + 
+  scale_color_manual(values = c("deepskyblue3", "darkblue"), 
+                     #labels = c("Low", "High"),
+                     name = "Class") +
+  scale_shape_manual(values = c(16, 17), 
+                     #  labels = c("Low", "High"),
+                     name = "Class") + 
+  facet_grid(group_name ~ matrix , scales = "free", space = "free")+
+  
+  # facet_grid( factor(term, levels= c("Mixture", "BDE47", "BDE99","BDE100", "BDE153" 
+  #                                    )) ~ matrix , scales = "free_y")+
+
+  theme(legend.position="right", 
+        strip.text = element_text(size =14), legend.text = element_text(size = 11), 
+        axis.title.x = element_text(size=14, face="bold", colour = "black"),
+        axis.text.x = element_text(size=14, colour = "black"),
+        axis.text.y = element_text(size=14,# face="bold", 
+                                   colour = "black"))  + #  For bold axis, include the following in theme(): axis.title.x = element_text(size=9, face="bold", colour = "black"), axis.text.y = element_text(size=9, face="bold", colour = "black")
+  labs(x = "Beta (95% Confidence Interval)", y = "", shape = "", alpha = "", fill = "") 
+# 
+# ggsave("mixture_lca.pdf",width = 6, height =6, units = "in")
+# ggsave("47_lca.pdf",width = 6, height =6, units = "in")
+# ggsave("99_lca.pdf",width = 6, height =6, units = "in")
+# ggsave("100_lca.pdf",width = 6, height =6, units = "in")
+# ggsave("153_lca.pdf",width = 6, height =6, units = "in")
+
+```
